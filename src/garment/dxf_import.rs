@@ -280,6 +280,303 @@ fn geometry(
     }
 }
 
+
+/// One entity as owned group pairs, so a block definition can be replayed
+/// many times with different INSERT transforms.
+#[derive(Clone, Debug)]
+struct RawEntity {
+    kind: String,
+    pairs: Vec<(i32, String)>,
+    vertices: Vec<Vec<(i32, String)>>,
+}
+
+fn as_pairs(owned: &[(i32, String)]) -> Vec<Pair<'_>> {
+    owned
+        .iter()
+        .map(|(code, value)| Pair {
+            code: *code,
+            value: value,
+        })
+        .collect()
+}
+
+/// Parse a bounded slice of group pairs into entities. Shared by ENTITIES and
+/// every BLOCK definition, so a block entity is read exactly like a model one.
+fn parse_entity_list(pairs: &[Pair<'_>]) -> Result<Vec<RawEntity>, String> {
+    let mut out = vec![];
+    let mut i = 0;
+    while i < pairs.len() {
+        if pairs[i].code != 0 {
+            return Err("Entity must start with group 0".into());
+        }
+        let kind = pairs[i].value.to_owned();
+        i += 1;
+        let start = i;
+        while i < pairs.len() && pairs[i].code != 0 {
+            i += 1;
+        }
+        let fields = pairs[start..i]
+            .iter()
+            .map(|p| (p.code, p.value.to_owned()))
+            .collect::<Vec<_>>();
+        let mut vertices = vec![];
+        if kind == "POLYLINE" {
+            while i < pairs.len() && pairs[i].value == "VERTEX" {
+                i += 1;
+                let start = i;
+                while i < pairs.len() && pairs[i].code != 0 {
+                    i += 1;
+                }
+                vertices.push(
+                    pairs[start..i]
+                        .iter()
+                        .map(|p| (p.code, p.value.to_owned()))
+                        .collect(),
+                );
+            }
+            if i >= pairs.len() || pairs[i].value != "SEQEND" {
+                return Err("POLYLINE missing SEQEND".into());
+            }
+            i += 1;
+            while i < pairs.len() && pairs[i].code != 0 {
+                i += 1;
+            }
+        }
+        out.push(RawEntity {
+            kind,
+            pairs: fields,
+            vertices,
+        });
+    }
+    Ok(out)
+}
+
+#[derive(Clone, Debug)]
+struct Block {
+    base: DVec2,
+    entities: Vec<RawEntity>,
+}
+
+fn parse_blocks(content: &[Pair<'_>], scale: f64) -> Result<Vec<(String, Block)>, String> {
+    let mut blocks = vec![];
+    let mut i = 0;
+    while i < content.len() {
+        if content[i].code != 0 || content[i].value != "BLOCK" {
+            return Err("Expected BLOCK in BLOCKS section".into());
+        }
+        i += 1;
+        let start = i;
+        while i < content.len() && content[i].code != 0 {
+            i += 1;
+        }
+        let header = &content[start..i];
+        let name = field(header, 2)?.ok_or("BLOCK without a name")?.to_owned();
+        let base = point(header, 10, scale)?;
+        let body_start = i;
+        while i < content.len() && !(content[i].code == 0 && content[i].value == "ENDBLK") {
+            i += 1;
+        }
+        if i == content.len() {
+            return Err("BLOCK missing ENDBLK".into());
+        }
+        let entities = parse_entity_list(&content[body_start..i])?;
+        i += 1;
+        while i < content.len() && content[i].code != 0 {
+            i += 1;
+        }
+        blocks.push((
+            name,
+            Block {
+                base,
+                entities,
+            },
+        ));
+    }
+    Ok(blocks)
+}
+
+/// Uniform-scale, rotation and translation of a block instance.
+#[derive(Clone, Copy)]
+struct Xform {
+    scale: f64,
+    cos: f64,
+    sin: f64,
+    translation: DVec2,
+}
+impl Xform {
+    fn identity() -> Self {
+        Self {
+            scale: 1.,
+            cos: 1.,
+            sin: 0.,
+            translation: DVec2::ZERO,
+        }
+    }
+    fn apply(&self, p: DVec2) -> DVec2 {
+        let x = p.x * self.scale;
+        let y = p.y * self.scale;
+        DVec2::new(
+            x * self.cos - y * self.sin + self.translation.x,
+            x * self.sin + y * self.cos + self.translation.y,
+        )
+    }
+    /// self after inner.
+    fn compose(&self, inner: &Xform) -> Xform {
+        let angle = self.sin.atan2(self.cos) + inner.sin.atan2(inner.cos);
+        Xform {
+            scale: self.scale * inner.scale,
+            cos: angle.cos(),
+            sin: angle.sin(),
+            translation: self.apply(inner.translation),
+        }
+    }
+}
+
+const MAX_BLOCK_DEPTH: usize = 4;
+
+struct Expansion<'a> {
+    blocks: &'a [(String, Block)],
+    scale: f64,
+    error: f64,
+    paths: Vec<Path>,
+    issues: Vec<Issue>,
+    total: usize,
+}
+
+impl Expansion<'_> {
+    fn emit(
+        &mut self,
+        kind: &str,
+        fields: &[Pair<'_>],
+        vertices: &[Vec<Pair<'_>>],
+        xform: &Xform,
+        layer: &str,
+        handle: Option<String>,
+        depth: usize,
+    ) {
+        match geometry(kind, fields, vertices, self.scale, self.error / xform.scale.abs()) {
+            Ok((points, closed)) => {
+                self.total += points.len();
+                self.paths.push(Path {
+                    entity: kind.into(),
+                    handle,
+                    layer: layer.to_owned(),
+                    points: points.into_iter().map(|p| xform.apply(p)).collect(),
+                    closed,
+                });
+            }
+            Err(reason) => self.issues.push(Issue {
+                entity: kind.into(),
+                handle,
+                layer: layer.to_owned(),
+                reason,
+            }),
+        }
+        let _ = depth;
+    }
+
+    /// Expand a block instance. Nested inserts compose their transforms; the
+    /// depth cap keeps a self-referencing block from looping.
+    fn insert(
+        &mut self,
+        entities: &[RawEntity],
+        xform: &Xform,
+        inherited_layer: &str,
+        depth: usize,
+    ) {
+        for raw in entities {
+            let pairs = as_pairs(&raw.pairs);
+            let layer = field(&pairs, 8)
+                .ok()
+                .flatten()
+                .unwrap_or("0")
+                .to_owned();
+            let layer = if layer == "0" {
+                inherited_layer.to_owned()
+            } else {
+                layer
+            };
+            let handle = field(&pairs, 5).ok().flatten().map(str::to_owned);
+            if raw.kind == "INSERT" {
+                if depth + 1 > MAX_BLOCK_DEPTH {
+                    self.issues.push(Issue {
+                        entity: "INSERT".into(),
+                        handle,
+                        layer,
+                        reason: format!("Block nesting deeper than {MAX_BLOCK_DEPTH}"),
+                    });
+                    continue;
+                }
+                match self.instance(&pairs, xform) {
+                    Ok((name, child)) => {
+                        let local = self.blocks.iter().find(|(n, _)| *n == name);
+                        match local {
+                            Some((_, block)) => {
+                                let entities = block.entities.clone();
+                                let base = block.base;
+                                let placed = Xform {
+                                    translation: child.translation
+                                        - DVec2::new(
+                                            base.x * child.scale * child.cos
+                                                - base.y * child.scale * child.sin,
+                                            base.x * child.scale * child.sin
+                                                + base.y * child.scale * child.cos,
+                                        ),
+                                    ..child
+                                };
+                                let combined = xform.compose(&placed);
+                                self.insert(&entities, &combined, &layer, depth + 1);
+                            }
+                            None => self.issues.push(Issue {
+                                entity: "INSERT".into(),
+                                handle,
+                                layer,
+                                reason: format!("Unknown block {name}"),
+                            }),
+                        }
+                    }
+                    Err(reason) => self.issues.push(Issue {
+                        entity: "INSERT".into(),
+                        handle,
+                        layer,
+                        reason,
+                    }),
+                }
+                continue;
+            }
+            let vertices = raw
+                .vertices
+                .iter()
+                .map(|v| as_pairs(v))
+                .collect::<Vec<_>>();
+            self.emit(&raw.kind, &pairs, &vertices, xform, &layer, handle, depth);
+        }
+    }
+
+    /// Read an INSERT's placement in drawing space, already in metres.
+    fn instance(
+        &self,
+        pairs: &[Pair<'_>],
+        parent: &Xform,
+    ) -> Result<(String, Xform), String> {
+        let name = field(pairs, 2)?.ok_or("INSERT without a block name")?.to_owned();
+        let sx = number(pairs, 41, Some(1.))?;
+        let sy = number(pairs, 42, Some(sx))?;
+        if !sx.is_finite() || !sy.is_finite() || sx == 0. || sy == 0. || (sx - sy).abs() > 1e-9 {
+            return Err("Non-uniform or zero INSERT scale is unsupported".into());
+        }
+        let rotation = number(pairs, 50, Some(0.))?.to_radians();
+        let insertion = point(pairs, 10, self.scale)?;
+        let local = Xform {
+            scale: sx,
+            cos: rotation.cos(),
+            sin: rotation.sin(),
+            translation: insertion,
+        };
+        Ok((name, parent.compose(&local)))
+    }
+}
+
 /// Parse into a reviewable geometry report. Structural or scale failures are
 /// errors; rejected entities are retained as issues alongside accepted paths.
 pub fn read_ascii(text: &str, options: Options) -> Result<Drawing, String> {
@@ -307,6 +604,7 @@ pub fn read_ascii(text: &str, options: Options) -> Result<Drawing, String> {
     let mut i = 0;
     let mut units = None;
     let mut entities: Option<&[Pair<'_>]> = None;
+    let mut blocks_section: Option<&[Pair<'_>]> = None;
     let mut eof = false;
     while i < pairs.len() {
         if pairs[i].code == 0 && pairs[i].value == "EOF" {
@@ -332,7 +630,11 @@ pub fn read_ascii(text: &str, options: Options) -> Result<Drawing, String> {
             return Err("Unclosed DXF section".into());
         }
         let content = &pairs[start..i];
-        if section == "ENTITIES" {
+        if section == "BLOCKS" {
+            if blocks_section.replace(content).is_some() {
+                return Err("Duplicate BLOCKS section".into());
+            }
+        } else if section == "ENTITIES" {
             if entities.replace(content).is_some() {
                 return Err("Duplicate ENTITIES section".into());
             }
@@ -374,6 +676,10 @@ pub fn read_ascii(text: &str, options: Options) -> Result<Drawing, String> {
         return Err("Scale must be positive and finite".into());
     }
     let entities = entities.ok_or("Missing ENTITIES section")?;
+    let blocks = match blocks_section {
+        Some(content) => parse_blocks(content, scale)?,
+        None => vec![],
+    };
     let mut result = Drawing {
         paths: vec![],
         issues: vec![],
@@ -381,60 +687,20 @@ pub fn read_ascii(text: &str, options: Options) -> Result<Drawing, String> {
         metres_per_unit: scale,
         scale_overridden: options.metres_per_unit.is_some(),
     };
-    let mut i = 0;
-    let mut total = 0;
-    while i < entities.len() {
-        if entities[i].code != 0 {
-            return Err("Entity must start with group 0".into());
-        }
-        let kind = entities[i].value;
-        i += 1;
-        let start = i;
-        while i < entities.len() && entities[i].code != 0 {
-            i += 1;
-        }
-        let fields = &entities[start..i];
-        let mut vertices = vec![];
-        if kind == "POLYLINE" {
-            while i < entities.len() && entities[i].value == "VERTEX" {
-                i += 1;
-                let start = i;
-                while i < entities.len() && entities[i].code != 0 {
-                    i += 1;
-                }
-                vertices.push(entities[start..i].to_vec());
-            }
-            if i >= entities.len() || entities[i].value != "SEQEND" {
-                return Err("POLYLINE missing SEQEND".into());
-            }
-            i += 1;
-            while i < entities.len() && entities[i].code != 0 {
-                i += 1;
-            }
-        }
-        let layer = field(fields, 8)?.unwrap_or("0").to_owned();
-        let handle = field(fields, 5)?.map(str::to_owned);
-        match geometry(kind, fields, &vertices, scale, options.chord_error_m) {
-            Ok((points, closed)) => {
-                total += points.len();
-                if total > MAX_POINTS {
-                    return Err("Drawing point budget exceeded".into());
-                }
-                result.paths.push(Path {
-                    entity: kind.into(),
-                    handle,
-                    layer,
-                    points,
-                    closed,
-                });
-            }
-            Err(reason) => result.issues.push(Issue {
-                entity: kind.into(),
-                handle,
-                layer,
-                reason,
-            }),
-        }
+    let mut expansion = Expansion {
+        blocks: &blocks,
+        scale,
+        error: options.chord_error_m,
+        paths: vec![],
+        issues: vec![],
+        total: 0,
+    };
+    let model = parse_entity_list(entities)?;
+    expansion.insert(&model, &Xform::identity(), "0", 0);
+    if expansion.total > MAX_POINTS {
+        return Err("Drawing point budget exceeded".into());
     }
+    result.paths = expansion.paths;
+    result.issues = expansion.issues;
     Ok(result)
 }
