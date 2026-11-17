@@ -12,6 +12,15 @@ fn main() {
         Ok(drawing) => {
             let closed = drawing.paths.iter().filter(|p| p.closed).count();
             let points: usize = drawing.paths.iter().map(|p| p.points.len()).sum();
+            let mut min = glam::DVec2::splat(f64::INFINITY);
+            let mut max = glam::DVec2::splat(f64::NEG_INFINITY);
+            for path in &drawing.paths {
+                for point in &path.points {
+                    min = min.min(*point);
+                    max = max.max(*point);
+                }
+            }
+            println!("bounds min ({:.3},{:.3}) max ({:.3},{:.3})", min.x, min.y, max.x, max.y);
             println!("paths {} closed {} points {} insunits {:?} m/unit {} override {}",
                 drawing.paths.len(), closed, points, drawing.insunits, drawing.metres_per_unit, drawing.scale_overridden);
             println!("issues {}", drawing.issues.len());
