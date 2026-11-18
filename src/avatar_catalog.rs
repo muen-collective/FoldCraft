@@ -58,6 +58,18 @@ pub struct AvatarEntry {
     pub generated: bool,
     #[serde(skip)]
     pub generator: Option<GeneratorDecl>,
+    /// Separate meshes next to the body (removable arms): name -> file in the form's directory.
+    #[serde(skip)]
+    pub parts: BTreeMap<String, PathBuf>,
+    /// Landmark heights (metres above the floor) a mesh form declares, so its tape lines can be cut.
+    #[serde(skip)]
+    pub landmarks: BTreeMap<String, f64>,
+    /// Vertices below this height are legs or stand, not the torso.
+    #[serde(skip)]
+    pub torso_from_m: Option<f64>,
+    /// Lines drawn exactly (the armhole seams, from the cut), instead of computed from the mesh.
+    #[serde(skip)]
+    pub preset_lines: Vec<crate::form_lines::GuideLine>,
     pub source: String,
     pub license: String,
 }
@@ -85,6 +97,14 @@ struct FormFile {
     provenance: String,
     #[serde(default)]
     sizing: Option<SizingDecl>,
+    #[serde(default)]
+    parts: BTreeMap<String, String>,
+    #[serde(default)]
+    landmarks: BTreeMap<String, f64>,
+    #[serde(default)]
+    torso_from_m: Option<f64>,
+    #[serde(default)]
+    lines: Vec<crate::form_lines::GuideLine>,
 }
 
 /// An avatar whose mesh was read and checked.
@@ -100,18 +120,28 @@ pub struct LoadedAvatar {
     pub torso_from_m: f64,
     /// Separate meshes (removable arms), by name: not part of `surface`, so they are not collided with.
     pub parts: std::collections::BTreeMap<String, Arc<SurfaceMesh>>,
+    /// Lines that are part of the form (the armhole seams from the cut), drawn instead of computed ones of the same name.
+    pub preset_lines: Vec<crate::form_lines::GuideLine>,
 }
 
 impl LoadedAvatar {
     /// Tape lines and seam lines on this form, cut from its mesh.
     pub fn guide_lines(&self) -> Vec<crate::form_lines::GuideLine> {
-        crate::form_lines::guide_lines(
+        let mut lines = crate::form_lines::guide_lines(
             &self.surface,
             &crate::form_lines::LineSpec {
                 landmarks: &self.landmarks,
                 torso_from_m: self.torso_from_m,
             },
-        )
+        );
+        // A preset line replaces the computed one of the same kind of thing: the armholes drawn from the real cut win over the ovals.
+        let has_armholes = self
+            .preset_lines
+            .iter()
+            .any(|l| l.name.starts_with("armhole_"));
+        lines.retain(|l| !(has_armholes && l.name.starts_with("armhole_")));
+        lines.extend(self.preset_lines.iter().cloned());
+        lines
     }
 
     /// The same form resized to `targets`; the shoulder line moves with the landmarks.
@@ -126,6 +156,7 @@ impl LoadedAvatar {
             landmarks: resized.knot_y.clone(),
             torso_from_m: self.torso_from_m,
             parts: self.parts.clone(),
+            preset_lines: self.preset_lines.clone(),
         };
         Ok((loaded, resized))
     }
@@ -171,6 +202,10 @@ fn mannequin(root: &Path) -> AvatarEntry {
         sizing: None,
         generated: false,
         generator: None,
+        parts: BTreeMap::new(),
+        landmarks: BTreeMap::new(),
+        torso_from_m: None,
+        preset_lines: Vec::new(),
         source:
             "MakeHuman community base mesh, extracted and normalised by scripts/prepare-avatar.py"
                 .to_owned(),
@@ -192,6 +227,10 @@ fn unavailable(id: String, title: String, reason: String) -> AvatarEntry {
         sizing: None,
         generated: false,
         generator: None,
+        parts: BTreeMap::new(),
+        landmarks: BTreeMap::new(),
+        torso_from_m: None,
+        preset_lines: Vec::new(),
         source: String::new(),
         license: String::new(),
     }
@@ -260,13 +299,42 @@ fn read_form(dir: &Path) -> Result<AvatarEntry, String> {
     let mesh_name = form.mesh.clone().unwrap_or_default();
     let mesh = dir.join(&mesh_name);
     let generated = form.generator.is_some();
-    let present = generated || mesh.is_file();
+    for (name, file) in &form.parts {
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(format!(
+                "form.json: part name {name:?} must be letters, digits and underscores"
+            ));
+        }
+        if !valid_mesh_name(file) {
+            return Err(format!(
+                "form.json: part {name} must be a bare .obj file name in the same directory"
+            ));
+        }
+    }
+    let parts: BTreeMap<String, PathBuf> = form
+        .parts
+        .iter()
+        .map(|(k, v)| (k.clone(), dir.join(v)))
+        .collect();
+    let missing: Vec<&str> = form
+        .parts
+        .values()
+        .map(String::as_str)
+        .filter(|f| !dir.join(f).is_file())
+        .collect();
+    let present = generated || (mesh.is_file() && missing.is_empty());
     Ok(AvatarEntry {
         id: form.id,
         title: form.title,
         kind: AvatarKind::DressForm,
         available: present,
-        reason: (!present).then(|| format!("{mesh_name} is not installed in {dir_name}/")),
+        reason: (!present).then(|| {
+            if mesh.is_file() || generated {
+                format!("{} is not installed in {dir_name}/", missing.join(", "))
+            } else {
+                format!("{mesh_name} is not installed in {dir_name}/")
+            }
+        }),
         mesh,
         height_m: Some(form.height_m),
         shoulder_height_m: Some(form.shoulder_height_m),
@@ -274,6 +342,10 @@ fn read_form(dir: &Path) -> Result<AvatarEntry, String> {
         sizing: form.sizing,
         generated,
         generator: form.generator,
+        parts,
+        landmarks: form.landmarks,
+        torso_from_m: form.torso_from_m,
+        preset_lines: form.lines,
         source: form.source,
         license: form.license,
     })
@@ -350,18 +422,30 @@ impl AvatarEntry {
         Ok(LoadedAvatar {
             id: self.id.clone(),
             surface,
-            parts: match &self.generator {
-                Some(g) => g
-                    .build_parts()?
-                    .into_iter()
-                    .map(|(name, mesh)| (name, Arc::new(mesh)))
-                    .collect(),
-                None => Default::default(),
+            parts: {
+                let mut parts: std::collections::BTreeMap<String, Arc<SurfaceMesh>> =
+                    match &self.generator {
+                        Some(g) => g
+                            .build_parts()?
+                            .into_iter()
+                            .map(|(name, mesh)| (name, Arc::new(mesh)))
+                            .collect(),
+                        None => Default::default(),
+                    };
+                for (name, path) in &self.parts {
+                    parts.insert(name.clone(), Arc::new(SurfaceMesh::load_obj(path)?));
+                }
+                parts
             },
-            landmarks: sizer.as_ref().map(|s| s.knot_heights()).unwrap_or_default(),
+            preset_lines: self.preset_lines.clone(),
+            landmarks: match &sizer {
+                Some(s) => s.knot_heights(),
+                None => self.landmarks.clone(),
+            },
             torso_from_m: sizing
                 .as_ref()
                 .and_then(|d| d.fixed_below_m)
+                .or(self.torso_from_m)
                 .unwrap_or(f64::NEG_INFINITY),
             shoulder_height_m: shoulder,
             sizer,

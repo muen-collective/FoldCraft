@@ -1,0 +1,24 @@
+{
+ "targets_cm": {
+  "bust": 106.68,
+  "waist": 92.71,
+  "hip": 105.41,
+  "neck": 43.5,
+  "thigh": 61.0,
+  "crotch_length": 74.61
+ },
+ "heights_m": {
+  "hip": 0.8964,
+  "waist": 1.1061,
+  "bust": 1.3094,
+  "neck": 1.51,
+  "thigh": 0.8134,
+  "waist_for_crotch": 1.1061
+ },
+ "reference_cm": {
+  "back_width": 46.36,
+  "front_length": 39.69,
+  "back_length": 45.72
+ },
+ "crotch_length_note": "front waist to back waist through the crotch, along the middle plane"
+}

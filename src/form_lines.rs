@@ -8,17 +8,17 @@
 //! Frame as everywhere: metres, Y up, +Z front. The form's *left* is +X (it faces +Z).
 use crate::avatar::SurfaceMesh;
 use glam::DVec3;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LineKind {
     Tape,
     Seam,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GuideLine {
     pub name: String,
     pub kind: LineKind,
@@ -138,6 +138,11 @@ fn longest_run(closed: bool, pts: &[DVec3], keep: impl Fn(DVec3) -> bool) -> Vec
     best
 }
 
+/// The extent of a loop in x: the torso's cut is wider than any limb inside it.
+fn width(p: &[DVec3]) -> f64 {
+    p.iter().map(|q| q.x).fold(f64::MIN, f64::max) - p.iter().map(|q| q.x).fold(f64::MAX, f64::min)
+}
+
 /// The x of the outermost surface of the torso at (y, z), on the +x side when `sign` > 0, else the -x side.
 /// A ray along x through the mesh: the point a pen would touch on the shoulder from the side.
 fn surface_x(mesh: &SurfaceMesh, torso_from: f64, y: f64, z: f64, sign: f64) -> Option<f64> {
@@ -198,7 +203,7 @@ pub fn guide_lines(mesh: &SurfaceMesh, spec: &LineSpec) -> Vec<GuideLine> {
         if let Some((closed, pts)) = loops
             .into_iter()
             .filter(|(_, p)| p.iter().all(|q| q.y >= spec.torso_from_m))
-            .max_by_key(|(_, p)| p.len())
+            .max_by(|(_, a), (_, b)| width(a).total_cmp(&width(b)))
         {
             lines.push(GuideLine {
                 name: name.to_owned(),
@@ -242,6 +247,8 @@ pub fn guide_lines(mesh: &SurfaceMesh, spec: &LineSpec) -> Vec<GuideLine> {
             .fold(0.0, f64::max)
     };
 
+    // A side seam runs from the armpit down: the plane through the mid-depth also crosses the shoulder tops, which are not part of it.
+    let side_top = spec.landmarks.get("bust").map_or(hi, |b| b + 0.02);
     let mut seam = |name: &str, axis: Axis, value: f64, keep: &dyn Fn(DVec3) -> bool| {
         let best = section(mesh, axis, value)
             .into_iter()
@@ -268,7 +275,7 @@ pub fn guide_lines(mesh: &SurfaceMesh, spec: &LineSpec) -> Vec<GuideLine> {
         seam(&format!("princess_back_{side}"), Axis::X, x, &|p| p.z < zc);
         // The side seam: the plane through the mid-depth, on one side or the other.
         seam(&format!("side_{side}"), Axis::Z, zc, &move |p| {
-            p.x * sign > 0.0
+            p.x * sign > 0.0 && p.y <= side_top
         });
     }
     // Armholes: an oval on each shoulder cast along x onto the surface, so it follows the form. Placed from the

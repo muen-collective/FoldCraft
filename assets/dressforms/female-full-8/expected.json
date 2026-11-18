@@ -1,0 +1,19 @@
+{
+ "targets_cm": {
+  "bust": 90.17,
+  "waist": 67.31,
+  "hip": 92.71,
+  "neck": 34.29,
+  "thigh": 50.2
+ },
+ "heights_m": {
+  "bust": 1.265,
+  "waist": 1.105,
+  "hip": 0.86,
+  "neck": 1.47,
+  "thigh": 0.81
+ },
+ "reference_cm": {
+  "single_shoulder": 13.03
+ }
+}
