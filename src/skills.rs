@@ -37,6 +37,11 @@ pub static SKILLS: &[Skill] = &[
         "sew-seams/SKILL.md"
     ),
     skill!(
+        "import-dxf",
+        "Open a real DXF export as editable panels: preview contours and names, apply an unambiguous selection.",
+        "import-dxf/SKILL.md"
+    ),
+    skill!(
         "gate-changes",
         "Propose a change, preview it, and let a person commit or cancel it.",
         "gate-changes/SKILL.md"

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type CatalogEntry, type DocumentSummary, type Panel, type Preview } from "./api";
+import { ImportPanel } from "./ImportPanel";
 
 const PANEL_COLOURS = ["#c8452b", "#2f6f6a", "#8a6b2f", "#4a5b8c", "#7a4a6a", "#3f6b3f"];
 
@@ -161,6 +162,8 @@ export default function App() {
             document={document}
             selection={selection}
             onSelect={(panel) => setSelection({ panel })}
+            onChanged={refresh}
+            onError={setError}
           />
         </aside>
       </div>
@@ -287,14 +290,31 @@ function Board({
   );
 }
 
+function ImportPanelHost({
+  document,
+  onApplied,
+  onError,
+}: {
+  document: DocumentSummary["document"];
+  onApplied: () => void;
+  onError: (message: string) => void;
+}) {
+  const fabricId = document?.fabrics[0]?.id ?? null;
+  return <ImportPanel fabricId={fabricId} onApplied={onApplied} onError={onError} />;
+}
+
 function Inspector({
   document,
   selection,
   onSelect,
+  onChanged,
+  onError,
 }: {
   document: DocumentSummary["document"];
   selection: Selection;
   onSelect: (panel: string) => void;
+  onChanged: () => void;
+  onError: (message: string) => void;
 }) {
   if (!document) {
     return <div className="inspector-empty">Nothing open yet.</div>;
@@ -302,6 +322,8 @@ function Inspector({
   const selectedPanel = document.panels.find((panel) => panel.id === selection.panel);
   return (
     <>
+      <ImportPanelHost document={document} onApplied={onChanged} onError={onError} />
+
       <section className="group">
         <h2>
           Pieces <span className="count">{document.counts.panels}</span>

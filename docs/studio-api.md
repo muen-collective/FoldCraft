@@ -27,6 +27,8 @@ development. `CLOTH_SERVER_ADDR` moves the socket.
 | POST | `/api/open` | `{"catalog": id}`, `{"path": path}` or `{"template": {...}}` | document summary |
 | GET | `/api/document` | — | document summary |
 | GET | `/api/preview` | — | board-space polylines in metres, with bounds |
+| POST | `/api/import/dxf/preview` | `{"path": path, "metres_per_unit"?: number}` | contour report: names, node counts before/after fitting, eligibility with reasons, left-out ledger. Runs on a throwaway session; the resident document is never read or written |
+| POST | `/api/import/dxf/apply` | `{"path", "selected": [index], "fabric": id, "metres_per_unit"?}` | document summary; one undoable history entry |
 | POST | `/api/command` | `{"command": {...}}` | document summary |
 | POST | `/api/prepare` | `{"command": {...}}` | change token, preview, no mutation |
 | POST | `/api/commit` | `{"change": token}` | document summary |

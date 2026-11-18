@@ -24,6 +24,7 @@ still read them.
 | `inspect-document` | before any edit; it is how identifiers are found |
 | `draft-panel` | adding rest geometry, assigning a fabric, placing and saving |
 | `sew-seams` | relating two named boundaries, with direction and easing chosen deliberately |
+| `import-dxf` | opening a real DXF export as editable panels, preview first |
 | `gate-changes` | proposing a change a person should confirm before it lands |
 
 ## Rules the cards encode

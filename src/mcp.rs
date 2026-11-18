@@ -92,6 +92,35 @@ impl Server {
                 let data = self.snapshot()?;
                 Ok(summarize_document(&data))
             }
+            "document_import_preview" => {
+                let path = require_string(args, "path")?;
+                let mut payload = json!({"op": "import_preview", "path": path});
+                if let Some(scale) = number(args, "metres_per_unit") {
+                    payload["metres_per_unit"] = json!(scale);
+                }
+                self.call(payload)
+            }
+            "document_import_apply" => {
+                let path = require_string(args, "path")?;
+                let fabric = require_string(args, "fabric")?;
+                let selected = args
+                    .get("selected")
+                    .cloned()
+                    .ok_or_else(|| ToolError::new("invalid_arguments", "selected [index] is required"))?;
+                let guard = self.client.guard();
+                let mut payload = json!({
+                    "op": "import_apply",
+                    "guard": guard,
+                    "path": path,
+                    "selected": selected,
+                    "fabric": fabric,
+                });
+                if let Some(scale) = number(args, "metres_per_unit") {
+                    payload["metres_per_unit"] = json!(scale);
+                }
+                let data = self.call(payload)?;
+                Ok(summarize_document(&data))
+            }
             "document_save" => {
                 let path = require_string(args, "path")?;
                 let template = self.template()?;
@@ -536,6 +565,32 @@ fn tool_definitions() -> Value {
                 "type": "object",
                 "properties": {"path": {"type": "string"}},
                 "required": ["path"]
+            }
+        },
+        {
+            "name": "document_import_preview",
+            "description": "Read a DXF file and report its contours without touching the document: piece names, closed flags, node counts before/after curve fitting, eligibility with reasons, and the left-out ledger. Pass metres_per_unit when the file has no unit header (0.001 for millimetres).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "metres_per_unit": {"type": "number"}
+                },
+                "required": ["path"]
+            }
+        },
+        {
+            "name": "document_import_apply",
+            "description": "Append the selected closed contours of a DXF file as ordinary editable panels, in one undoable history entry. Selections must be unambiguous: nested or overlapping outlines are refused rather than guessed as holes.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "selected": {"type": "array", "items": {"type": "integer"}},
+                    "fabric": {"type": "string", "description": "An existing fabric id from document_inspect."},
+                    "metres_per_unit": {"type": "number"}
+                },
+                "required": ["path", "selected", "fabric"]
             }
         },
         {
