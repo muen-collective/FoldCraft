@@ -27,6 +27,15 @@ fn main() {
             for issue in drawing.issues.iter().take(8) {
                 println!("issue {} {} :: {}", issue.entity, issue.layer, issue.reason);
             }
+            for path in drawing.paths.iter().filter(|p| p.fitted_points.is_some()).take(6) {
+                println!(
+                    "fitted {} nodes {} -> {} curves {}",
+                    path.piece.clone().unwrap_or_else(|| path.layer.clone()),
+                    path.source_nodes,
+                    path.fitted_points.as_ref().map(Vec::len).unwrap_or(0),
+                    path.curves.len(),
+                );
+            }
             for path in drawing.paths.iter().take(5) {
                 println!("path {} layer {} closed {} points {}", path.entity, path.layer, path.closed, path.points.len());
             }

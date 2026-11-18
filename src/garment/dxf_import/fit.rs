@@ -73,35 +73,67 @@ pub fn fit_edges(points: &[DVec2], closed: bool) -> Vec<FittedEdge> {
     if points.len() < 2 {
         return vec![];
     }
-    // A closed contour whose stored ring omits the repeated seam point gets
-    // its wrap-around neighbour back; otherwise tangents at the seam break.
+    // Normalise to a ring without a duplicated seam point.
     let mut ring: Vec<DVec2> = points.to_vec();
-    let true_closed = closed && ring.first() != ring.last();
-    if true_closed {
-        ring.push(ring[0]);
+    if closed && ring.first() == ring.last() {
+        ring.pop();
     }
     let n = ring.len();
+    if n < 2 {
+        return vec![];
+    }
     let prev = |i: usize| ring[(i + n - 1) % n];
     let next = |i: usize| ring[(i + 1) % n];
-    let count = if closed { n - 1 } else { n - 1 };
+    // Chord-scaled Catmull-Rom tangent at point i. A plain (next - prev) * k
+    // launches control points across the piece when one neighbour is far away
+    // (a sharp corner beside a long straight run); scaling each side by its
+    // own chord keeps handles local to their edge. A strong direction break
+    // is a corner: both handles collapse so the edges meet as straight lines.
+    let tangent = |i: usize| -> DVec2 {
+        let p = prev(i);
+        let c = ring[i];
+        let q = next(i);
+        let vin = c - p;
+        let vout = q - c;
+        let len_in = vin.length();
+        let len_out = vout.length();
+        if len_in == 0. || len_out == 0. || !(len_in.is_finite() && len_out.is_finite()) {
+            return DVec2::ZERO;
+        }
+        let cos_turn = vin.dot(vout) / (len_in * len_out);
+        // Turn sharper than ~60 degrees: treat as a corner, no overshoot.
+        if cos_turn < 0.5 {
+            return DVec2::ZERO;
+        }
+        // Smooth: blend the unit directions, scale by the shorter adjacent
+        // chord so neither side can dominate the handle.
+        let blended = vout / len_out + vin / len_in;
+        let magnitude = len_in.min(len_out) * 0.4;
+        let norm = blended.length();
+        if norm == 0. || !norm.is_finite() {
+            return DVec2::ZERO;
+        }
+        blended / norm * magnitude
+    };
+    let count = if closed { n } else { n - 1 };
     let mut edges = Vec::with_capacity(count);
     for i in 0..count {
         let a = ring[i];
-        let b = ring[i + 1];
+        let b = ring[(i + 1) % n];
         let ta = if closed || i > 0 {
-            (next(i) - prev(i)) * 0.25
+            tangent(i)
         } else {
             (b - a) * 0.5
         };
         let tb = if closed || i + 1 < n - 1 {
-            (next(i + 1) - prev(i + 1)) * 0.25
+            tangent((i + 1) % n)
         } else {
             (b - a) * 0.5
         };
         edges.push(FittedEdge {
             start: a,
-            c1: a + ta / 3.0 * 2.0,
-            c2: b - tb / 3.0 * 2.0,
+            c1: a + ta,
+            c2: b - tb,
             end: b,
         });
     }
