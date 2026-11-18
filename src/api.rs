@@ -20,7 +20,8 @@ static SIM: std::sync::Mutex<Option<crate::preview::Preview>> = std::sync::Mutex
 /// The body the preview drapes on: an `avatar_catalog` id, or none. Selecting resets the preview.
 static AVATAR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 /// The measurements the selected form was resized to (`form_sizing`), or none: the scan as it is.
-static AVATAR_SIZE: std::sync::Mutex<Option<crate::form_sizing::Targets>> = std::sync::Mutex::new(None);
+static AVATAR_SIZE: std::sync::Mutex<Option<crate::form_sizing::Targets>> =
+    std::sync::Mutex::new(None);
 type ApiResult = Result<Json<Value>, (StatusCode, Json<Value>)>;
 
 const MAX_TEMPLATE_BYTES: usize = 8 * 1024 * 1024;
@@ -50,6 +51,7 @@ pub fn router() -> std::io::Result<Router> {
         .route("/api/avatars", get(avatars))
         .route("/api/avatar", post(select_avatar))
         .route("/api/avatar/mesh", get(avatar_mesh))
+        .route("/api/avatar/lines", get(avatar_lines))
         .route("/api/avatar/size", get(avatar_size).post(set_avatar_size))
         .route("/api/undo", post(undo))
         .route("/api/redo", post(redo))
@@ -145,7 +147,9 @@ async fn upload(request: axum::extract::Request) -> ApiResult {
 async fn edges(State(state): State<Shared>) -> ApiResult {
     let template = lock(&state)?.template().map_err(rejected)?;
     let list = crate::inspect::board_edges(&template).map_err(rejected)?;
-    Ok(Json(serde_json::json!({ "units": "metres", "edges": list })))
+    Ok(Json(
+        serde_json::json!({ "units": "metres", "edges": list }),
+    ))
 }
 
 /// Preview a DXF without touching the resident document.
@@ -161,7 +165,8 @@ async fn import_preview(Json(body): Json<Value>) -> ApiResult {
     }
     // A fresh session answers previews; the resident document is never read or
     // written, so a preview cannot disturb an editing person.
-    let mut client = Client::new().map_err(|e| rejected(SessionError::new("io_failure", e.to_string())))?;
+    let mut client =
+        Client::new().map_err(|e| rejected(SessionError::new("io_failure", e.to_string())))?;
     let data = client.call(payload).map_err(rejected)?;
     Ok(Json(data))
 }
@@ -199,8 +204,7 @@ async fn import_apply(State(state): State<Shared>, Json(body): Json<Value>) -> A
 /// Body: {"catalog": id} | {"path": path} | {"template": {...}}
 async fn open(State(state): State<Shared>, Json(body): Json<Value>) -> ApiResult {
     let template = if let Some(id) = body.get("catalog").and_then(Value::as_str) {
-        let selection =
-            Selection::bundled(id).map_err(|error| bad_request(error))?;
+        let selection = Selection::bundled(id).map_err(|error| bad_request(error))?;
         serde_json::to_value(selection.template())
             .map_err(|error| bad_request(error.to_string()))?
     } else if let Some(path) = body.get("path").and_then(Value::as_str) {
@@ -270,18 +274,32 @@ async fn scene(State(state): State<Shared>) -> ApiResult {
 }
 
 async fn sim_step(State(state): State<Shared>, Json(body): Json<Value>) -> ApiResult {
-    let steps = body.get("steps").and_then(Value::as_u64).unwrap_or(1).clamp(1, 240) as usize;
+    let steps = body
+        .get("steps")
+        .and_then(Value::as_u64)
+        .unwrap_or(1)
+        .clamp(1, 240) as usize;
     let (template, revision) = {
         let mut client = lock(&state)?;
         let snapshot = client.snapshot().map_err(rejected)?;
         (
-            snapshot.get("template").cloned().ok_or_else(|| bad_request("no document"))?,
-            snapshot.get("revision").and_then(Value::as_u64).unwrap_or(0),
+            snapshot
+                .get("template")
+                .cloned()
+                .ok_or_else(|| bad_request("no document"))?,
+            snapshot
+                .get("revision")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
         )
     };
     let parsed = parse_template(&template)?;
     let mut guard = SIM.lock().map_err(|e| bad_request(e.to_string()))?;
-    if guard.as_ref().is_some_and(|preview| preview.stale(revision)) || guard.is_none() {
+    if guard
+        .as_ref()
+        .is_some_and(|preview| preview.stale(revision))
+        || guard.is_none()
+    {
         let avatar = load_selected().map_err(avatar_failure)?;
         *guard = Some(
             crate::preview::Preview::from_template_with_avatar(&parsed, revision, avatar.as_ref())
@@ -383,8 +401,16 @@ fn size_report(
             fields.push(field(key, *base, resized.measured.girth_cm[key]));
         }
     }
-    fields.push(field("back_waist_length", sizer.base.back_waist_length_cm, resized.measured.back_waist_length_cm));
-    fields.push(field("waist_to_hip", sizer.base.waist_to_hip_cm, resized.measured.waist_to_hip_cm));
+    fields.push(field(
+        "back_waist_length",
+        sizer.base.back_waist_length_cm,
+        resized.measured.back_waist_length_cm,
+    ));
+    fields.push(field(
+        "waist_to_hip",
+        sizer.base.waist_to_hip_cm,
+        resized.measured.waist_to_hip_cm,
+    ));
     let tapes: Vec<Value> = resized
         .knot_y
         .iter()
@@ -402,7 +428,11 @@ async fn avatar_size() -> ApiResult {
     let raw = load_selected_raw()
         .map_err(avatar_failure)?
         .ok_or_else(|| bad_request("no avatar is selected"))?;
-    let targets = AVATAR_SIZE.lock().ok().and_then(|g| g.clone()).unwrap_or_default();
+    let targets = AVATAR_SIZE
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .unwrap_or_default();
     Ok(Json(size_report(&raw, &targets).map_err(size_failure)?))
 }
 
@@ -417,7 +447,9 @@ async fn set_avatar_size(Json(body): Json<Value>) -> ApiResult {
         Some(Value::Object(map)) => {
             let mut flat = std::collections::BTreeMap::new();
             for (key, value) in map {
-                let number = value.as_f64().ok_or_else(|| bad_request(format!("{key} must be a number of centimetres")))?;
+                let number = value
+                    .as_f64()
+                    .ok_or_else(|| bad_request(format!("{key} must be a number of centimetres")))?;
                 flat.insert(key.clone(), number);
             }
             crate::form_sizing::Targets::from_flat(&flat).map_err(bad_request)?
@@ -425,7 +457,8 @@ async fn set_avatar_size(Json(body): Json<Value>) -> ApiResult {
         Some(_) => return Err(bad_request("targets_cm must be an object or null")),
     };
     let report = size_report(&raw, &targets).map_err(size_failure)?;
-    *AVATAR_SIZE.lock().map_err(|e| bad_request(e.to_string()))? = (!targets.is_empty()).then_some(targets);
+    *AVATAR_SIZE.lock().map_err(|e| bad_request(e.to_string()))? =
+        (!targets.is_empty()).then_some(targets);
     if let Ok(mut sim) = SIM.lock() {
         *sim = None;
     }
@@ -465,6 +498,16 @@ async fn select_avatar(Json(body): Json<Value>) -> ApiResult {
 }
 
 /// The selected body's surface, for drawing. Static geometry in metres, to the tenth of a millimetre.
+/// Tape lines and seam lines cut from the selected form, as polylines in metres (Y up, +Z front).
+async fn avatar_lines() -> ApiResult {
+    let avatar = load_selected()
+        .map_err(avatar_failure)?
+        .ok_or_else(|| bad_request("no avatar is selected"))?;
+    Ok(Json(
+        json!({"avatar": avatar.id, "units": "m", "lines": avatar.guide_lines()}),
+    ))
+}
+
 async fn avatar_mesh() -> ApiResult {
     let avatar = load_selected()
         .map_err(avatar_failure)?
@@ -484,9 +527,10 @@ async fn avatar_mesh() -> ApiResult {
     })))
 }
 
-fn parse_template(value: &Value) -> Result<crate::garment::GarmentTemplate, (StatusCode, Json<Value>)> {
-    serde_json::from_value(value.clone())
-        .map_err(|e| bad_request(format!("invalid template: {e}")))
+fn parse_template(
+    value: &Value,
+) -> Result<crate::garment::GarmentTemplate, (StatusCode, Json<Value>)> {
+    serde_json::from_value(value.clone()).map_err(|e| bad_request(format!("invalid template: {e}")))
 }
 
 fn server_error(error: String) -> (StatusCode, Json<Value>) {

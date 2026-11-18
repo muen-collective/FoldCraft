@@ -46,6 +46,9 @@ pub struct SizeChartRow {
     /// Where this row's numbers come from (a table, its URL, who read it). Say so when it is unchecked.
     #[serde(default)]
     pub source: String,
+    /// Published numbers that are checked, not targeted (a shoulder length the sizer cannot set).
+    #[serde(default)]
+    pub reference_cm: BTreeMap<String, f64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -32,5 +32,20 @@ fn main() {
         });
         std::fs::write(format!("{out}.landmarks.json"), side.to_string()).expect("write landmarks");
     }
+    let lines = loaded.guide_lines();
+    std::fs::write(
+        format!("{out}.lines.json"),
+        serde_json::to_string(&lines).expect("json"),
+    )
+    .expect("write lines");
+    for l in &lines {
+        println!(
+            "  {:?} {} ({} points{})",
+            l.kind,
+            l.name,
+            l.points.len(),
+            if l.closed { ", closed" } else { "" }
+        );
+    }
     println!("wrote {out}: {} vertices", loaded.surface.vertices.len());
 }

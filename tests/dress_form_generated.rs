@@ -146,13 +146,8 @@ fn load_us8() -> avatar_catalog::LoadedAvatar {
 fn us8_is_built_to_its_chart_row_within_a_millimetre() {
     let a = load_us8();
     let m = &a.sizer.as_ref().unwrap().base.girth_cm;
-    for (key, want) in [
-        ("bust", 89.99),
-        ("underbust", 75.01),
-        ("waist", 67.49),
-        ("hip", 92.99),
-        ("neck", 34.01),
-    ] {
+    // The Shop Company's women's US 8: bust 35.5, waist 26.5, hips 36.5, neck 13.5 in. It publishes no underbust.
+    for (key, want) in [("bust", 90.17), ("waist", 67.31), ("hip", 92.71), ("neck", 34.29)] {
         assert!((m[key] - want).abs() < 0.1, "{key}: {} vs {want}", m[key]);
     }
 }

@@ -94,9 +94,24 @@ pub struct LoadedAvatar {
     pub shoulder_height_m: Option<f64>,
     /// Present when the form declares landmarks, so it can be resized.
     pub sizer: Option<Sizer>,
+    /// Landmark heights as this form stands, by name (empty when the form declares none).
+    pub landmarks: std::collections::BTreeMap<String, f64>,
+    /// Vertices below this height are the stand, not the torso.
+    pub torso_from_m: f64,
 }
 
 impl LoadedAvatar {
+    /// Tape lines and seam lines on this form, cut from its mesh.
+    pub fn guide_lines(&self) -> Vec<crate::form_lines::GuideLine> {
+        crate::form_lines::guide_lines(
+            &self.surface,
+            &crate::form_lines::LineSpec {
+                landmarks: &self.landmarks,
+                torso_from_m: self.torso_from_m,
+            },
+        )
+    }
+
     /// The same form resized to `targets`; the shoulder line moves with the landmarks.
     pub fn sized(&self, targets: &Targets) -> Result<(LoadedAvatar, Resized), String> {
         let sizer = self.sizer.as_ref().ok_or("this avatar cannot be resized")?;
@@ -106,6 +121,8 @@ impl LoadedAvatar {
             surface: Arc::new(resized.surface.clone()),
             shoulder_height_m: self.shoulder_height_m.map(|y| resized.map_y(y)),
             sizer: None,
+            landmarks: resized.knot_y.clone(),
+            torso_from_m: self.torso_from_m,
         };
         Ok((loaded, resized))
     }
@@ -330,6 +347,11 @@ impl AvatarEntry {
         Ok(LoadedAvatar {
             id: self.id.clone(),
             surface,
+            landmarks: sizer.as_ref().map(|s| s.knot_heights()).unwrap_or_default(),
+            torso_from_m: sizing
+                .as_ref()
+                .and_then(|d| d.fixed_below_m)
+                .unwrap_or(f64::NEG_INFINITY),
             shoulder_height_m: shoulder,
             sizer,
         })
