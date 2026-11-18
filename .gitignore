@@ -9,3 +9,7 @@ __pycache__/
 
 # local API uploads (studio file picker)
 .uploads/
+
+# Dress-form meshes are installed by whoever holds their licence; only form.json is committed.
+assets/dressforms/*/*.obj
+assets/dressforms/*/*.glb

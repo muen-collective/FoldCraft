@@ -17,6 +17,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 type Shared = Arc<Mutex<Client>>;
 static SIM: std::sync::Mutex<Option<crate::preview::Preview>> = std::sync::Mutex::new(None);
+/// The body the preview drapes on: an `avatar_catalog` id, or none. Selecting resets the preview.
+static AVATAR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 type ApiResult = Result<Json<Value>, (StatusCode, Json<Value>)>;
 
 const MAX_TEMPLATE_BYTES: usize = 8 * 1024 * 1024;
@@ -43,6 +45,9 @@ pub fn router() -> std::io::Result<Router> {
         .route("/api/scene", get(scene))
         .route("/api/sim/step", post(sim_step))
         .route("/api/sim/reset", post(sim_reset))
+        .route("/api/avatars", get(avatars))
+        .route("/api/avatar", post(select_avatar))
+        .route("/api/avatar/mesh", get(avatar_mesh))
         .route("/api/undo", post(undo))
         .route("/api/redo", post(redo))
         .with_state(state))
@@ -274,7 +279,11 @@ async fn sim_step(State(state): State<Shared>, Json(body): Json<Value>) -> ApiRe
     let parsed = parse_template(&template)?;
     let mut guard = SIM.lock().map_err(|e| bad_request(e.to_string()))?;
     if guard.as_ref().is_some_and(|preview| preview.stale(revision)) || guard.is_none() {
-        *guard = Some(crate::preview::Preview::from_template(&parsed, revision).map_err(server_error)?);
+        let avatar = load_selected().map_err(avatar_failure)?;
+        *guard = Some(
+            crate::preview::Preview::from_template_with_avatar(&parsed, revision, avatar.as_ref())
+                .map_err(server_error)?,
+        );
     }
     let preview = guard.as_mut().expect("just built");
     let (done, failure) = preview.step(steps);
@@ -292,6 +301,79 @@ async fn sim_reset(State(state): State<Shared>) -> ApiResult {
     }
     let _ = state;
     Ok(Json(json!({"reset": true})))
+}
+
+fn avatar_failure(detail: String) -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({"error": {"code": "avatar_unavailable", "detail": detail}})),
+    )
+}
+
+fn selected_avatar_id() -> Option<String> {
+    AVATAR.lock().ok().and_then(|guard| guard.clone())
+}
+
+/// The selected body, read and checked; `None` when no body is selected.
+fn load_selected() -> Result<Option<crate::avatar_catalog::LoadedAvatar>, String> {
+    let Some(id) = selected_avatar_id() else {
+        return Ok(None);
+    };
+    let entries = crate::avatar_catalog::discover(&crate::avatar_catalog::assets_root());
+    let entry = entries
+        .iter()
+        .find(|entry| entry.id == id)
+        .ok_or_else(|| format!("avatar {id} is no longer installed"))?;
+    entry.load().map(Some)
+}
+
+/// Every body the preview can use, with whether its mesh is installed and why not.
+async fn avatars() -> Json<Value> {
+    let entries = crate::avatar_catalog::discover(&crate::avatar_catalog::assets_root());
+    Json(json!({"selected": selected_avatar_id(), "avatars": entries}))
+}
+
+/// Choose the body (`{"id": "..."}`) or none (`{"id": null}`). The mesh is read and checked
+/// here, so a unit error is reported at selection, not at the first step.
+async fn select_avatar(Json(body): Json<Value>) -> ApiResult {
+    let id = match body.get("id") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(id)) => Some(id.clone()),
+        Some(_) => return Err(bad_request("id must be a string or null")),
+    };
+    if let Some(id) = &id {
+        let entries = crate::avatar_catalog::discover(&crate::avatar_catalog::assets_root());
+        let entry = entries
+            .iter()
+            .find(|entry| &entry.id == id)
+            .ok_or_else(|| bad_request(format!("unknown avatar {id}")))?;
+        entry.load().map_err(avatar_failure)?;
+    }
+    *AVATAR.lock().map_err(|e| bad_request(e.to_string()))? = id.clone();
+    if let Ok(mut sim) = SIM.lock() {
+        *sim = None;
+    }
+    Ok(Json(json!({"selected": id})))
+}
+
+/// The selected body's surface, for drawing. Static geometry in metres, to the tenth of a millimetre.
+async fn avatar_mesh() -> ApiResult {
+    let avatar = load_selected()
+        .map_err(avatar_failure)?
+        .ok_or_else(|| bad_request("no avatar is selected"))?;
+    let round = |value: f64| (value * 10_000.0).round() / 10_000.0;
+    Ok(Json(json!({
+        "id": avatar.id,
+        "units": "metres",
+        "shoulder_height_m": avatar.shoulder_height_m,
+        "positions": avatar
+            .surface
+            .vertices
+            .iter()
+            .map(|p| [round(p.x), round(p.y), round(p.z)])
+            .collect::<Vec<_>>(),
+        "triangles": avatar.surface.triangles.clone(),
+    })))
 }
 
 fn parse_template(value: &Value) -> Result<crate::garment::GarmentTemplate, (StatusCode, Json<Value>)> {

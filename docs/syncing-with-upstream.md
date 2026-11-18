@@ -18,6 +18,8 @@ git merge upstream/main        # or rebase; upstream moves fast
 | HTTP door | `src/api.rs`, `src/bin/cloth-server.rs` | additive |
 | Shared session path | `src/session_client.rs`, `src/inspect.rs` | additive |
 | Skills | `skills/`, `src/skills.rs` | additive |
+| Dress forms | `src/avatar_catalog.rs`, `tests/avatar_catalog.rs`, `assets/dressforms/`, `docs/dress-forms.md` | additive |
+| Preview body | `src/preview.rs` (`from_template_with_avatar`), the avatar routes in `src/api.rs` | edits our own layer, not upstream numerics |
 | Studio | `studio/` | isolated |
 | Registration | one line each in `src/lib.rs`, `Cargo.toml` | small, conflict-prone; resolve by hand |
 

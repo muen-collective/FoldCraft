@@ -1,0 +1,11 @@
+{
+  "id": "dressform-scan-v01",
+  "title": "Dress form (scan, bust 91 cm)",
+  "mesh": "dressform-torso.obj",
+  "height_m": 0.8126,
+  "shoulder_height_m": 0.6398,
+  "dimensions_cm": { "bust": 91.4, "waist": 66.6, "hip": 93.1, "neck": 32.2 },
+  "source": "Photogrammetry scan of a women's torso form supplied by the founder; origin not stated. Straightened, scaled to the founder's girths, cut above the scan's base artifact and decimated to 24,000 triangles in Blender (scripts/avatar/prepare_dressform.py in the Darts repository).",
+  "license": "unknown: not for redistribution until the origin is confirmed",
+  "provenance": "Scale fitted to bust, waist and hip girths (2.9 percent spread); neck, neck-to-waist and waist-to-hip are checks. Front chosen by the hip-versus-waist test and confirmed on renders."
+}

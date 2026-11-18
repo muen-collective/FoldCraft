@@ -3,9 +3,12 @@
 //! The scene rebuilds when the template revision changes. Stepping runs the
 //! interactive VBD solver on CPU - the same one the desktop worker uses - and
 //! returns draped positions. This is a preview: it names its solver and never
-//! claims a fit. No avatar collider is attached; body contact needs an
-//! authored fitting project and stays out of this door.
+//! claims a fit. With no avatar selected no body is attached. With one selected
+//! (`avatar_catalog`) the garment is lifted onto the body's shoulder line and the
+//! solver gets the body mesh as its collider; the snapshot says which, and by how
+//! much it moved the garment.
 use crate::{
+    avatar_catalog::{LoadedAvatar, garment_lift},
     garment::GarmentTemplate,
     model::State,
     vbd::{VbdSettings, VbdSolver},
@@ -22,6 +25,8 @@ pub struct Preview {
     state: State,
     settings: VbdSettings,
     solver: VbdSolver,
+    avatar_id: Option<String>,
+    lift_m: f64,
 }
 
 /// Flat rest-shape mesh in world arrangement coordinates. Static geometry;
@@ -55,15 +60,45 @@ fn panel_triangles(garment: &crate::garment::CompiledGarment) -> Vec<Value> {
 
 impl Preview {
     pub fn from_template(template: &GarmentTemplate, signature: u64) -> Result<Self, String> {
-        let garment = Arc::new(template.compile()?);
+        Self::from_template_with_avatar(template, signature, None)
+    }
+
+    /// Build the preview, optionally on a body. The template given is never modified: the lift
+    /// is applied to a copy, so the document and the preview cannot drift apart.
+    pub fn from_template_with_avatar(
+        template: &GarmentTemplate,
+        signature: u64,
+        avatar: Option<&LoadedAvatar>,
+    ) -> Result<Self, String> {
+        let mut arranged = template.clone();
+        let mut lift_m = 0.0;
+        if let Some(shoulder) = avatar.and_then(|a| a.shoulder_height_m) {
+            let top = arranged
+                .compile()?
+                .arrangement_positions
+                .iter()
+                .map(|p| p.y)
+                .fold(f64::NEG_INFINITY, f64::max);
+            lift_m = garment_lift(top, Some(shoulder));
+            for panel in &mut arranged.panels {
+                panel.placement.translation.y += lift_m;
+            }
+        }
+        let garment = Arc::new(arranged.compile()?);
         let state = garment.initial_state.clone();
-        let solver = VbdSolver::new(Arc::clone(&garment), None, &state)?;
+        let solver = VbdSolver::new(
+            Arc::clone(&garment),
+            avatar.map(|a| a.surface.as_ref()),
+            &state,
+        )?;
         Ok(Self {
             signature,
             garment,
             state,
             settings: VbdSettings::default(),
             solver,
+            avatar_id: avatar.map(|a| a.id.clone()),
+            lift_m,
         })
     }
 
@@ -84,7 +119,13 @@ impl Preview {
 
     pub fn snapshot(&self) -> Value {
         json!({
-            "solver": "CPU VBD (interactive, no avatar contact)",
+            "solver": if self.avatar_id.is_some() {
+                "CPU VBD (interactive, avatar contact)"
+            } else {
+                "CPU VBD (interactive, no avatar contact)"
+            },
+            "avatar": self.avatar_id,
+            "garment_lift_m": self.lift_m,
             "claim": "preview, not a fit",
             "time_s": self.state.time,
             "dt": self.settings.dt,
