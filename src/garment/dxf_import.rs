@@ -45,6 +45,8 @@ pub struct Path {
     pub entity: String,
     pub handle: Option<String>,
     pub layer: String,
+    /// Piece name from the AAMA-style record inside its block, if any.
+    pub piece: Option<String>,
     /// Metres, with a repeated first point only for closed paths.
     pub points: Vec<DVec2>,
     pub closed: bool,
@@ -65,6 +67,10 @@ pub struct Drawing {
     pub insunits: Option<i32>,
     pub metres_per_unit: f64,
     pub scale_overridden: bool,
+    /// SAMPLE SIZE record, when the file carries one.
+    pub sample_size: Option<String>,
+    /// UNITS record, when the file carries one.
+    pub unit_record: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -355,10 +361,42 @@ fn parse_entity_list(pairs: &[Pair<'_>]) -> Result<Vec<RawEntity>, String> {
 struct Block {
     base: DVec2,
     entities: Vec<RawEntity>,
+    /// AAMA-style piece record carried by the block, if the file has one.
+    piece: Option<String>,
 }
 
-fn parse_blocks(content: &[Pair<'_>], scale: f64) -> Result<Vec<(String, Block)>, String> {
+/// Record prefixes the industry writes as TEXT near or inside a piece.
+const PIECE_RECORD: &str = "PIECE NAME:";
+const SAMPLE_RECORD: &str = "SAMPLE SIZE:";
+const UNITS_RECORD: &str = "UNITS:";
+
+fn record_value_of(entity: &RawEntity, prefix: &str) -> Option<String> {
+    if entity.kind != "TEXT" {
+        return None;
+    }
+    let text = entity.pairs.iter().find(|(code, _)| *code == 1)?.1.as_str();
+    text.trim()
+        .strip_prefix(prefix)
+        .map(|rest| rest.trim().to_owned())
+        .filter(|rest| !rest.is_empty())
+}
+
+fn is_record_line(entity: &RawEntity) -> bool {
+    record_value_of(entity, PIECE_RECORD).is_some()
+        || record_value_of(entity, SAMPLE_RECORD).is_some()
+        || record_value_of(entity, UNITS_RECORD).is_some()
+}
+
+struct Blocks {
+    entries: Vec<(String, Block)>,
+    sample_size: Option<String>,
+    unit_record: Option<String>,
+}
+
+fn parse_blocks(content: &[Pair<'_>], scale: f64) -> Result<Blocks, String> {
     let mut blocks = vec![];
+    let mut sample_size = None;
+    let mut unit_record = None;
     let mut i = 0;
     while i < content.len() {
         if content[i].code != 0 || content[i].value != "BLOCK" {
@@ -379,7 +417,23 @@ fn parse_blocks(content: &[Pair<'_>], scale: f64) -> Result<Vec<(String, Block)>
         if i == content.len() {
             return Err("BLOCK missing ENDBLK".into());
         }
-        let entities = parse_entity_list(&content[body_start..i])?;
+        let mut entities = parse_entity_list(&content[body_start..i])?;
+        let mut piece = None;
+        entities.retain(|entity| {
+            if let Some(value) = record_value_of(entity, PIECE_RECORD) {
+                piece = Some(value);
+                return false;
+            }
+            if let Some(value) = record_value_of(entity, SAMPLE_RECORD) {
+                sample_size.get_or_insert(value);
+                return false;
+            }
+            if let Some(value) = record_value_of(entity, UNITS_RECORD) {
+                unit_record.get_or_insert(value);
+                return false;
+            }
+            true
+        });
         i += 1;
         while i < content.len() && content[i].code != 0 {
             i += 1;
@@ -389,10 +443,15 @@ fn parse_blocks(content: &[Pair<'_>], scale: f64) -> Result<Vec<(String, Block)>
             Block {
                 base,
                 entities,
+                piece,
             },
         ));
     }
-    Ok(blocks)
+    Ok(Blocks {
+        entries: blocks,
+        sample_size,
+        unit_record,
+    })
 }
 
 /// Uniform-scale, rotation and translation of a block instance.
@@ -436,6 +495,7 @@ const MAX_BLOCK_DEPTH: usize = 4;
 
 struct Expansion<'a> {
     blocks: &'a [(String, Block)],
+    piece: Option<String>,
     scale: f64,
     error: f64,
     paths: Vec<Path>,
@@ -461,6 +521,7 @@ impl Expansion<'_> {
                     entity: kind.into(),
                     handle,
                     layer: layer.to_owned(),
+                    piece: self.piece.clone(),
                     points: points.into_iter().map(|p| xform.apply(p)).collect(),
                     closed,
                 });
@@ -482,8 +543,13 @@ impl Expansion<'_> {
         entities: &[RawEntity],
         xform: &Xform,
         inherited_layer: &str,
+        piece: Option<&str>,
         depth: usize,
     ) {
+        let previous = self.piece.take();
+        if let Some(piece) = piece {
+            self.piece = Some(piece.to_owned());
+        }
         for raw in entities {
             let pairs = as_pairs(&raw.pairs);
             let layer = field(&pairs, 8)
@@ -525,7 +591,8 @@ impl Expansion<'_> {
                                     ..child
                                 };
                                 let combined = xform.compose(&placed);
-                                self.insert(&entities, &combined, &layer, depth + 1);
+                                let inner = block.piece.clone();
+                                self.insert(&entities, &combined, &layer, inner.as_deref(), depth + 1);
                             }
                             None => self.issues.push(Issue {
                                 entity: "INSERT".into(),
@@ -549,8 +616,14 @@ impl Expansion<'_> {
                 .iter()
                 .map(|v| as_pairs(v))
                 .collect::<Vec<_>>();
+            if is_record_line(raw) {
+                // A record line is metadata consumed by the reader; it is
+                // never a contour and never an unsupported-entity issue.
+                continue;
+            }
             self.emit(&raw.kind, &pairs, &vertices, xform, &layer, handle, depth);
         }
+        self.piece = previous;
     }
 
     /// Read an INSERT's placement in drawing space, already in metres.
@@ -678,7 +751,11 @@ pub fn read_ascii(text: &str, options: Options) -> Result<Drawing, String> {
     let entities = entities.ok_or("Missing ENTITIES section")?;
     let blocks = match blocks_section {
         Some(content) => parse_blocks(content, scale)?,
-        None => vec![],
+        None => Blocks {
+            entries: vec![],
+            sample_size: None,
+            unit_record: None,
+        },
     };
     let mut result = Drawing {
         paths: vec![],
@@ -686,9 +763,12 @@ pub fn read_ascii(text: &str, options: Options) -> Result<Drawing, String> {
         insunits: units,
         metres_per_unit: scale,
         scale_overridden: options.metres_per_unit.is_some(),
+        sample_size: blocks.sample_size.clone(),
+        unit_record: blocks.unit_record.clone(),
     };
     let mut expansion = Expansion {
-        blocks: &blocks,
+        blocks: &blocks.entries,
+        piece: None,
         scale,
         error: options.chord_error_m,
         paths: vec![],
@@ -696,11 +776,31 @@ pub fn read_ascii(text: &str, options: Options) -> Result<Drawing, String> {
         total: 0,
     };
     let model = parse_entity_list(entities)?;
-    expansion.insert(&model, &Xform::identity(), "0", 0);
+    // Model-space record lines are metadata for the whole drawing, never
+    // contours and never unsupported-entity issues.
+    let mut model_sample_size = blocks.sample_size.clone();
+    let mut model_unit_record = blocks.unit_record.clone();
+    let model = model
+        .into_iter()
+        .filter(|raw| {
+            if let Some(value) = record_value_of(raw, SAMPLE_RECORD) {
+                model_sample_size.get_or_insert(value);
+                return false;
+            }
+            if let Some(value) = record_value_of(raw, UNITS_RECORD) {
+                model_unit_record.get_or_insert(value);
+                return false;
+            }
+            !record_value_of(raw, PIECE_RECORD).is_some()
+        })
+        .collect::<Vec<_>>();
+    expansion.insert(&model, &Xform::identity(), "0", None, 0);
     if expansion.total > MAX_POINTS {
         return Err("Drawing point budget exceeded".into());
     }
     result.paths = expansion.paths;
     result.issues = expansion.issues;
+    result.sample_size = model_sample_size;
+    result.unit_record = model_unit_record;
     Ok(result)
 }

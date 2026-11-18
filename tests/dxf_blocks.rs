@@ -62,3 +62,41 @@ fn layer_inheritance_follows_the_insert() {
         drawing.paths.iter().map(|p| p.layer.as_str()).collect();
     assert!(!layers.contains("0"), "block contents inherit a real layer: {layers:?}");
 }
+
+#[test]
+fn piece_names_attach_to_their_block() {
+    let drawing = read(include_str!("fixtures/dxf/drapexd-bodice-sleeve.dxf"));
+    let named: std::collections::BTreeSet<String> = drawing
+        .paths
+        .iter()
+        .filter(|path| path.closed)
+        .filter_map(|path| path.piece.clone())
+        .collect();
+    for expected in ["Bodice front", "Bodice back", "Sleeve", "Sleeve (mirror)"] {
+        assert!(named.contains(expected), "missing piece name in {named:?}");
+    }
+    // Record lines (PIECE NAME / UNITS) are metadata; they must not appear
+    // among unsupported-entity issues. Label texts ("10") legitimately do.
+    let record_issues: Vec<_> = drawing
+        .issues
+        .iter()
+        .filter(|i| i.entity == "TEXT" && i.reason.contains("NAME"))
+        .collect();
+    assert!(record_issues.is_empty(), "record lines leaked as issues");
+}
+
+#[test]
+fn block_export_carries_its_piece_names() {
+    let drawing = read(include_str!("fixtures/dxf/drapexd-block.dxf"));
+    let named: std::collections::BTreeSet<String> =
+        drawing.paths.iter().filter_map(|path| path.piece.clone()).collect();
+    assert!(named.contains("Skirt front"), "{named:?}");
+    assert!(named.contains("Skirt back"), "{named:?}");
+}
+
+#[test]
+fn units_record_survives_without_a_sample_size() {
+    let drawing = read(include_str!("fixtures/dxf/drapexd-bodice-sleeve.dxf"));
+    assert_eq!(drawing.unit_record.as_deref(), Some("METRIC"));
+    assert_eq!(drawing.sample_size, None);
+}
