@@ -92,9 +92,34 @@ export type BoardEdge = {
 
 export type EdgeList = { units: "metres"; edges: BoardEdge[] };
 
+export type AvatarEntry = {
+  id: string;
+  title: string;
+  kind: "mannequin" | "dress_form";
+  available: boolean;
+  reason: string | null;
+  height_m: number | null;
+  shoulder_height_m: number | null;
+  dimensions_cm: Record<string, number>;
+  source: string;
+  license: string;
+};
+
+export type AvatarList = { selected: string | null; avatars: AvatarEntry[] };
+
+export type AvatarMesh = {
+  id: string;
+  units: "metres";
+  shoulder_height_m: number | null;
+  positions: [number, number, number][];
+  triangles: [number, number, number][];
+};
+
 export type DrapeSnapshot = {
   solver: string;
   claim: string;
+  avatar?: string | null;
+  garment_lift_m?: number;
   time_s: number;
   dt: number;
   stepsDone?: number;
@@ -165,6 +190,14 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ steps }),
     }),
+  avatars: () => request<AvatarList>("/api/avatars"),
+  selectAvatar: (id: string | null) =>
+    request<{ selected: string | null }>("/api/avatar", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id }),
+    }),
+  avatarMesh: () => request<AvatarMesh>("/api/avatar/mesh"),
   download: async (kind: "svg" | "print-svg") => {
     const response = await fetch("/api/export/" + kind);
     if (!response.ok) throw new Error("export failed");

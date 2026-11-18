@@ -6,6 +6,8 @@ import {
   type ImportContour,
   type DocumentSummary,
   type Panel,
+  type AvatarList,
+  type AvatarMesh,
   type DrapeSnapshot,
   type Preview,
 } from "./api";
@@ -24,6 +26,8 @@ export default function App() {
  const [edges, setEdges] = useState<BoardEdge[]>([]);
   const [ghosts, setGhosts] = useState<ImportContour[]>([]);
   const [drape, setDrape] = useState<DrapeSnapshot | null>(null);
+  const [avatars, setAvatars] = useState<AvatarList | null>(null);
+  const [avatarMesh, setAvatarMesh] = useState<AvatarMesh | null>(null);
   const [playing, setPlaying] = useState(false);
   const playRef = useRef(false);
   const stepBusy = useRef(false);
@@ -72,6 +76,37 @@ export default function App() {
       cancelled = true;
     };
   }, [playing]);
+
+  // The body the preview drapes on. The server reads and checks the mesh when it is
+  // chosen, so a unit error shows up here and not at the first step.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await api.avatars();
+        if (cancelled) return;
+        setAvatars(list);
+        if (list.selected) setAvatarMesh(await api.avatarMesh());
+      } catch {
+        /* an older server has no avatar routes; the picker simply stays hidden */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const chooseAvatar = useCallback(async (id: string | null) => {
+    setPlaying(false);
+    try {
+      await api.selectAvatar(id);
+      setDrape(null);
+      setAvatarMesh(id ? await api.avatarMesh() : null);
+      setAvatars(await api.avatars());
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : String(problem));
+    }
+  }, []);
 
   const stepOnce = useCallback(async () => {
     setPlaying(false);
@@ -221,6 +256,23 @@ export default function App() {
             {playing ? "Pause" : "Play"}
           </button>
           <button type="button" onClick={stepOnce}>Step</button>
+          {avatars ? (
+            <select
+              aria-label="Body"
+              className="drape-body"
+              value={avatars.selected ?? ""}
+              onChange={(event) => void chooseAvatar(event.target.value || null)}
+              title="The body the garment drapes on"
+            >
+              <option value="">no body</option>
+              {avatars.avatars.map((entry) => (
+                <option key={entry.id} value={entry.id} disabled={!entry.available} title={entry.reason ?? entry.source}>
+                  {entry.title}
+                  {entry.available ? "" : " (not installed)"}
+                </option>
+              ))}
+            </select>
+          ) : null}
           <span className="drape-label">{drape ? "preview · not a fit" : "no drape"}</span>
         </div>
 
@@ -248,7 +300,7 @@ export default function App() {
           ))}
         </nav>
 
-        <main className="board" data-split={drape ? "true" : undefined}>
+        <main className="board" data-split={drape || avatarMesh ? "true" : undefined}>
           {preview ? (
            <Board
               preview={preview}
@@ -264,12 +316,20 @@ export default function App() {
               {busy ? "Opening…" : "Open a garment to start."}
             </div>
           )}
-          {drape ? (
+          {drape || avatarMesh ? (
             <div className="drape-pane">
-              <DrapeView snapshot={drape} />
+              <DrapeView snapshot={drape} avatar={avatarMesh} />
               <span className="drape-caption">
-                {drape.solver} · t {drape.time_s.toFixed(2)} s ·{" "}
-                <strong>preview, not a fit</strong>
+                {drape ? (
+                  <>
+                    {drape.solver} · t {drape.time_s.toFixed(2)} s
+                    {drape.garment_lift_m ? <> · garment lifted {(drape.garment_lift_m * 100).toFixed(0)} cm onto the shoulder line</> : null}
+                    {" "}·{" "}
+                    <strong>preview, not a fit</strong>
+                  </>
+                ) : (
+                  <>{avatarMesh?.id} · body only, press Play or Step to drape</>
+                )}
               </span>
             </div>
           ) : null}

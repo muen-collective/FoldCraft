@@ -358,4 +358,5 @@ button, select { font: inherit; color: inherit; }
   padding: 3px 8px; border-radius: 4px;
 }
 .drape-caption strong { color: var(--warn); font-weight: 600; }
+.drape-transport .drape-body { max-width: 190px; font-size: 11px; }
 .drape-transport .drape-label { font-size: 10px; color: var(--text-subtle); padding: 0 4px; }
