@@ -61,6 +61,27 @@ export type Preview = {
   seamCount: number;
 };
 
+export type ImportContour = {
+  index: number;
+  piece: string | null;
+  layer: string;
+  closed: boolean;
+  sourceNodes: number;
+  fittedNodes: number | null;
+  curvedEdges: number;
+  eligible: boolean;
+  reason: string | null;
+};
+
+export type ImportPreview = {
+  units: { insunits: number | null; metresPerUnit: number; overridden: boolean };
+  sampleSize: string | null;
+  unitRecord: string | null;
+  contours: ImportContour[];
+  leftOut: { entity: string; layer: string; reason: string }[];
+  leftOutTotal: number;
+};
+
 export type CatalogEntry = {
   id: string;
   title: string;
@@ -87,6 +108,18 @@ export const api = {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ catalog }),
+    }),
+  importPreview: (path: string, metresPerUnit?: number) =>
+    request<ImportPreview>("/api/import/dxf/preview", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path, metres_per_unit: metresPerUnit }),
+    }),
+  importApply: (path: string, selected: number[], fabric: string, metresPerUnit?: number) =>
+    request<DocumentSummary>("/api/import/dxf/apply", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path, selected, fabric, metres_per_unit: metresPerUnit }),
     }),
   undo: () => request<DocumentSummary>("/api/undo", { method: "POST" }),
   redo: () => request<DocumentSummary>("/api/redo", { method: "POST" }),

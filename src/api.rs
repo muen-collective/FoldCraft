@@ -28,6 +28,8 @@ pub fn router() -> std::io::Result<Router> {
         .route("/api/document", get(document))
         .route("/api/preview", get(preview))
         .route("/api/open", post(open))
+        .route("/api/import/dxf/preview", post(import_preview))
+        .route("/api/import/dxf/apply", post(import_apply))
         .route("/api/command", post(command))
         .route("/api/prepare", post(prepare))
         .route("/api/commit", post(commit))
@@ -86,6 +88,54 @@ async fn document(State(state): State<Shared>) -> ApiResult {
 async fn preview(State(state): State<Shared>) -> ApiResult {
     let template = lock(&state)?.template().map_err(rejected)?;
     Ok(Json(preview_paths(&template).map_err(rejected)?))
+}
+
+/// Preview a DXF without touching the resident document.
+/// Body: {"path": string, "metres_per_unit"?: number}
+async fn import_preview(Json(body): Json<Value>) -> ApiResult {
+    let path = body
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| bad_request("path is required"))?;
+    let mut payload = json!({"op": "import_preview", "path": path});
+    if let Some(scale) = body.get("metres_per_unit").and_then(Value::as_f64) {
+        payload["metres_per_unit"] = json!(scale);
+    }
+    // A fresh session answers previews; the resident document is never read or
+    // written, so a preview cannot disturb an editing person.
+    let mut client = Client::new().map_err(|e| rejected(SessionError::new("io_failure", e.to_string())))?;
+    let data = client.call(payload).map_err(rejected)?;
+    Ok(Json(data))
+}
+
+/// Append selected closed contours as editable panels, one history entry.
+/// Body: {"path": string, "selected": [index], "fabric": id, "metres_per_unit"?: number}
+async fn import_apply(State(state): State<Shared>, Json(body): Json<Value>) -> ApiResult {
+    let path = body
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| bad_request("path is required"))?;
+    let fabric = body
+        .get("fabric")
+        .and_then(Value::as_str)
+        .ok_or_else(|| bad_request("fabric is required"))?;
+    let selected = body
+        .get("selected")
+        .cloned()
+        .ok_or_else(|| bad_request("selected is required"))?;
+    let mut client = lock(&state)?;
+    let mut payload = json!({
+        "op": "import_apply",
+        "guard": client.guard(),
+        "path": path,
+        "selected": selected,
+        "fabric": fabric,
+    });
+    if let Some(scale) = body.get("metres_per_unit").and_then(Value::as_f64) {
+        payload["metres_per_unit"] = json!(scale);
+    }
+    let data = client.call(payload).map_err(rejected)?;
+    Ok(Json(summarize_document(&data)))
 }
 
 /// Body: {"catalog": id} | {"path": path} | {"template": {...}}

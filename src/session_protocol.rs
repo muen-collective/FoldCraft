@@ -36,6 +36,8 @@ const OPERATIONS: &[&str] = &[
     "hello",
     "snapshot",
     "open",
+    "import_preview",
+    "import_apply",
     "edit",
     "prepare_edit",
     "commit",
@@ -55,6 +57,9 @@ const COMMANDS: &[&str] = &[
     "mirror",
     "fabric",
 ];
+/// Bounded DXF import: preview never touches the document; apply appends
+/// selected closed contours as ordinary editable panels in one history entry.
+pub const MAX_IMPORT_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -206,6 +211,19 @@ enum Operation {
     },
     Redo {
         guard: Guard,
+    },
+    ImportPreview {
+        path: String,
+        #[serde(default)]
+        metres_per_unit: Option<f64>,
+    },
+    ImportApply {
+        guard: Guard,
+        path: String,
+        selected: Vec<usize>,
+        fabric: String,
+        #[serde(default)]
+        metres_per_unit: Option<f64>,
     },
 }
 #[derive(Deserialize)]
@@ -371,6 +389,51 @@ impl Session {
                 }
                 self.pending = None;
             }
+            Operation::ImportPreview {
+                path,
+                metres_per_unit,
+            } => {
+                let drawing = crate::pattern_import::Source::load(std::path::Path::new(&path))
+                    .map_err(|e| fail("io_failure", e))?
+                    .inspect(crate::garment::dxf_import::Options {
+                        metres_per_unit,
+                        ..Default::default()
+                    })
+                    .map_err(|e| fail("invalid_dxf", e))?;
+                return Ok(import_preview(&drawing));
+            }
+            Operation::ImportApply {
+                guard,
+                path,
+                selected,
+                fabric,
+                metres_per_unit,
+            } => {
+                self.guard(&guard)?;
+                let next = self.next_revision()?;
+                let template = self
+                    .template
+                    .as_ref()
+                    .ok_or_else(|| fail("no_document", "Open a document first"))?;
+                let source = crate::pattern_import::Source::load(std::path::Path::new(&path))
+                    .map_err(|e| fail("io_failure", e))?;
+                let drawing = source
+                    .inspect(crate::garment::dxf_import::Options {
+                        metres_per_unit,
+                        ..Default::default()
+                    })
+                    .map_err(|e| fail("invalid_dxf", e))?;
+                let edit = crate::pattern_import::prepare(
+                    template,
+                    &drawing,
+                    &selected,
+                    &fabric,
+                    Default::default(),
+                    glam::DVec3::new(0., 0., 2.5),
+                )
+                .map_err(|e| fail("invalid_geometry", e))?;
+                self.commit(edit, next);
+            }
             Operation::Undo { guard } => self.restore(guard, false)?,
             Operation::Redo { guard } => self.restore(guard, true)?,
         }
@@ -452,6 +515,45 @@ impl Session {
             }
         }
     }
+}
+
+/// A reviewable contour report for one DXF file. Nothing here mutates state.
+fn import_preview(drawing: &crate::garment::dxf_import::Drawing) -> Value {
+    let contours: Vec<Value> = drawing
+        .paths
+        .iter()
+        .enumerate()
+        .map(|(index, path)| {
+            let issue = crate::pattern_import::contour_issue(path).map(str::to_owned);
+            json!({
+                "index": index,
+                "piece": path.piece,
+                "layer": path.layer,
+                "closed": path.closed,
+                "sourceNodes": path.source_nodes,
+                "fittedNodes": path.fitted_points.as_ref().map(Vec::len),
+                "curvedEdges": path.curves.len(),
+                "eligible": issue.is_none(),
+                "reason": issue,
+            })
+        })
+        .collect();
+    let issues: Vec<Value> = drawing
+        .issues
+        .iter()
+        .take(200)
+        .map(|issue| {
+            json!({"entity": issue.entity, "layer": issue.layer, "reason": issue.reason})
+        })
+        .collect();
+    json!({
+        "units": {"insunits": drawing.insunits, "metresPerUnit": drawing.metres_per_unit, "overridden": drawing.scale_overridden},
+        "sampleSize": drawing.sample_size,
+        "unitRecord": drawing.unit_record,
+        "contours": contours,
+        "leftOut": issues,
+        "leftOutTotal": drawing.issues.len(),
+    })
 }
 
 /// Bounded framing drains an oversized line before processing the next request.
