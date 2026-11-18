@@ -98,6 +98,8 @@ pub struct LoadedAvatar {
     pub landmarks: std::collections::BTreeMap<String, f64>,
     /// Vertices below this height are the stand, not the torso.
     pub torso_from_m: f64,
+    /// Separate meshes (removable arms), by name: not part of `surface`, so they are not collided with.
+    pub parts: std::collections::BTreeMap<String, Arc<SurfaceMesh>>,
 }
 
 impl LoadedAvatar {
@@ -123,6 +125,7 @@ impl LoadedAvatar {
             sizer: None,
             landmarks: resized.knot_y.clone(),
             torso_from_m: self.torso_from_m,
+            parts: self.parts.clone(),
         };
         Ok((loaded, resized))
     }
@@ -347,6 +350,14 @@ impl AvatarEntry {
         Ok(LoadedAvatar {
             id: self.id.clone(),
             surface,
+            parts: match &self.generator {
+                Some(g) => g
+                    .build_parts()?
+                    .into_iter()
+                    .map(|(name, mesh)| (name, Arc::new(mesh)))
+                    .collect(),
+                None => Default::default(),
+            },
             landmarks: sizer.as_ref().map(|s| s.knot_heights()).unwrap_or_default(),
             torso_from_m: sizing
                 .as_ref()

@@ -48,11 +48,51 @@ pub struct StandDecl {
     pub base_height_m: f64,
 }
 
+/// One ring of a limb: where its middle is, and how far it reaches across (rx) and front to back (rz).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LimbRow {
+    pub p: [f64; 3],
+    pub rx: f64,
+    pub rz: f64,
+}
+
+/// A tube along a path: rings perpendicular to the path, an ellipse (superellipse) each, capped flat at both ends.
+/// `mirror` makes the form's right limb from the left (+x is the form's left). With `part` set, each limb is its own
+/// mesh (`<part>_left`, `<part>_right`: a removable arm); without it the limb is joined into the main body (a leg).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LimbDecl {
+    pub name: String,
+    #[serde(default)]
+    pub part: Option<String>,
+    #[serde(default)]
+    pub mirror: bool,
+    #[serde(default = "default_limb_exponent")]
+    pub exponent: f64,
+    /// Keep every ring horizontal (a leg standing on the floor, cut flat there) instead of square to the path.
+    #[serde(default)]
+    pub level: bool,
+    pub rows: Vec<LimbRow>,
+}
+
+fn default_limb_exponent() -> f64 {
+    2.2
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct GeneratorDecl {
     pub profile: Vec<ProfileRow>,
-    pub stand: StandDecl,
+    /// A pole and base under the torso. Without it (a full-body form standing on its legs) give `hem_height_m`.
+    #[serde(default)]
+    pub stand: Option<StandDecl>,
+    /// Height of the torso's flat bottom above the floor, when there is no stand.
+    #[serde(default)]
+    pub hem_height_m: Option<f64>,
+    /// Legs (joined into the body) and arms (separate meshes).
+    #[serde(default)]
+    pub limbs: Vec<LimbDecl>,
     #[serde(default)]
     pub sides: Option<usize>,
     /// Which row of the sizing chart the form is built to, or none: the profile as it is.
@@ -63,8 +103,17 @@ pub struct GeneratorDecl {
 }
 
 impl GeneratorDecl {
+    /// Height of the torso's flat bottom above the floor.
+    pub fn hem(&self) -> f64 {
+        self.stand
+            .as_ref()
+            .map(|s| s.hem_height_m)
+            .or(self.hem_height_m)
+            .unwrap_or(0.0)
+    }
+
     pub fn height_m(&self) -> f64 {
-        self.stand.hem_height_m + self.profile.last().map_or(0.0, |r| r.y_m)
+        self.hem() + self.profile.last().map_or(0.0, |r| r.y_m)
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -113,24 +162,35 @@ impl GeneratorDecl {
                 ));
             }
         }
-        let s = &self.stand;
-        let narrowest = self.profile[0]
-            .half_width_m
-            .min(self.profile[0].front_m)
-            .min(-self.profile[0].back_m);
-        if !(s.hem_height_m > 0.1 && s.pole_radius_m > 0.002 && s.base_height_m > 0.0) {
-            return Err(
-                "generator: stand dimensions must be positive (hem at least 10 cm up)".to_owned(),
-            );
+        match (&self.stand, self.hem_height_m) {
+            (Some(s), None) => {
+                let narrowest = self.profile[0]
+                    .half_width_m
+                    .min(self.profile[0].front_m)
+                    .min(-self.profile[0].back_m);
+                if !(s.hem_height_m > 0.1 && s.pole_radius_m > 0.002 && s.base_height_m > 0.0) {
+                    return Err(
+                        "generator: stand dimensions must be positive (hem at least 10 cm up)"
+                            .to_owned(),
+                    );
+                }
+                if s.pole_radius_m >= narrowest || s.pole_radius_m >= s.base_radius_m {
+                    return Err(
+                        "generator: the pole must be thinner than the torso's bottom and than the base"
+                            .to_owned(),
+                    );
+                }
+                if s.base_height_m + POLE_GAP_M >= s.hem_height_m {
+                    return Err("generator: the base reaches the torso".to_owned());
+                }
+            }
+            (None, Some(h)) if h.is_finite() && h > 0.1 => {}
+            _ => {
+                return Err("generator: give either a stand or hem_height_m (above 0.1), not both and not neither".to_owned());
+            }
         }
-        if s.pole_radius_m >= narrowest || s.pole_radius_m >= s.base_radius_m {
-            return Err(
-                "generator: the pole must be thinner than the torso's bottom and than the base"
-                    .to_owned(),
-            );
-        }
-        if s.base_height_m + POLE_GAP_M >= s.hem_height_m {
-            return Err("generator: the base reaches the torso".to_owned());
+        for limb in &self.limbs {
+            limb.validate()?;
         }
         Ok(())
     }
@@ -143,7 +203,7 @@ impl GeneratorDecl {
             vertices: Vec::new(),
             triangles: Vec::new(),
         };
-        let hem = self.stand.hem_height_m;
+        let hem = self.hem();
 
         // Torso: a ring of `sides` points per row.
         let ring = |row: &ProfileRow| -> Vec<DVec3> {
@@ -194,21 +254,22 @@ impl GeneratorDecl {
         }
 
         // The stand: a pole and a base, each a closed cylinder.
-        let s = &self.stand;
-        cylinder(
-            &mut mesh,
-            s.base_radius_m,
-            0.0,
-            s.base_height_m,
-            POLE_SIDES * 2,
-        );
-        cylinder(
-            &mut mesh,
-            s.pole_radius_m,
-            s.base_height_m,
-            hem - POLE_GAP_M,
-            POLE_SIDES,
-        );
+        if let Some(s) = &self.stand {
+            cylinder(
+                &mut mesh,
+                s.base_radius_m,
+                0.0,
+                s.base_height_m,
+                POLE_SIDES * 2,
+            );
+            cylinder(
+                &mut mesh,
+                s.pole_radius_m,
+                s.base_height_m,
+                hem - POLE_GAP_M,
+                POLE_SIDES,
+            );
+        }
 
         // Make every piece wind outward: the signed volume of the whole must be positive.
         if signed_volume(&mesh) < 0.0 {
@@ -216,8 +277,138 @@ impl GeneratorDecl {
                 t.swap(1, 2);
             }
         }
+        // Legs and other joined limbs: each is its own closed piece, wound outward on its own.
+        for limb in self.limbs.iter().filter(|l| l.part.is_none()) {
+            for (_, piece) in limb.build(sides)? {
+                let base = mesh.vertices.len();
+                mesh.vertices.extend(piece.vertices);
+                mesh.triangles
+                    .extend(piece.triangles.into_iter().map(|t| t.map(|i| i + base)));
+            }
+        }
         mesh.validate()?;
         Ok(mesh)
+    }
+
+    /// The separate meshes (removable arms): `<part>_left` and `<part>_right`, each a closed surface.
+    pub fn build_parts(&self) -> Result<Vec<(String, SurfaceMesh)>, String> {
+        self.validate()?;
+        let sides = self.sides.unwrap_or(DEFAULT_SIDES);
+        let mut out = Vec::new();
+        for limb in self.limbs.iter().filter(|l| l.part.is_some()) {
+            out.extend(limb.build(sides)?);
+        }
+        Ok(out)
+    }
+}
+
+impl LimbDecl {
+    fn validate(&self) -> Result<(), String> {
+        let n = &self.name;
+        if self.rows.len() < 3 {
+            return Err(format!("limb {n}: needs at least 3 rows"));
+        }
+        if !(1.5..=6.0).contains(&self.exponent) {
+            return Err(format!(
+                "limb {n}: exponent {} is outside 1.5-6",
+                self.exponent
+            ));
+        }
+        for (i, r) in self.rows.iter().enumerate() {
+            if !(r.p.iter().all(|v| v.is_finite()) && r.rx.is_finite() && r.rz.is_finite()) {
+                return Err(format!(
+                    "limb {n}: row {i} has a value that is not a number"
+                ));
+            }
+            if r.rx < 0.01 || r.rz < 0.01 {
+                return Err(format!(
+                    "limb {n}: row {i} needs rx and rz of at least 1 cm"
+                ));
+            }
+            if i > 0 {
+                let (a, b) = (DVec3::from(self.rows[i - 1].p), DVec3::from(r.p));
+                if (b - a).length() < 0.005 {
+                    return Err(format!(
+                        "limb {n}: rows {} and {i} are less than 5 mm apart",
+                        i - 1
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The limb's mesh, or its left and right pair when mirrored (left is +x).
+    fn build(&self, sides: usize) -> Result<Vec<(String, SurfaceMesh)>, String> {
+        let part = self.part.clone().unwrap_or_else(|| self.name.clone());
+        let one = |sign: f64| -> Result<SurfaceMesh, String> {
+            let centres: Vec<DVec3> = self
+                .rows
+                .iter()
+                .map(|r| DVec3::new(sign * r.p[0], r.p[1], r.p[2]))
+                .collect();
+            let mut mesh = SurfaceMesh {
+                vertices: Vec::new(),
+                triangles: Vec::new(),
+            };
+            let p = 2.0 / self.exponent;
+            for (i, row) in self.rows.iter().enumerate() {
+                let (a, b) = (
+                    centres[i.saturating_sub(1)],
+                    centres[(i + 1).min(centres.len() - 1)],
+                );
+                let t = (b - a).normalize();
+                // A frame around the path: e1 is across (x as far as the path allows), e2 front to back.
+                let across = if t.x.abs() > 0.99 { DVec3::Z } else { DVec3::X };
+                let (e1, e2) = if self.level {
+                    (DVec3::X, DVec3::Z)
+                } else {
+                    let e1 = (across - t * across.dot(t)).normalize();
+                    (e1, t.cross(e1))
+                };
+                for k in 0..sides {
+                    let a = TAU * k as f64 / sides as f64;
+                    let (c, s) = (a.cos(), a.sin());
+                    mesh.vertices.push(
+                        centres[i]
+                            + e1 * (row.rx * c.signum() * c.abs().powf(p))
+                            + e2 * (row.rz * s.signum() * s.abs().powf(p)),
+                    );
+                }
+            }
+            let at = |r: usize, k: usize| r * sides + (k % sides);
+            for r in 0..self.rows.len() - 1 {
+                for k in 0..sides {
+                    mesh.triangles
+                        .push([at(r, k), at(r, k + 1), at(r + 1, k + 1)]);
+                    mesh.triangles
+                        .push([at(r, k), at(r + 1, k + 1), at(r + 1, k)]);
+                }
+            }
+            for (r, up) in [(0, false), (self.rows.len() - 1, true)] {
+                let centre = mesh.vertices.len();
+                mesh.vertices.push(centres[r]);
+                for k in 0..sides {
+                    mesh.triangles.push(if up {
+                        [centre, at(r, k), at(r, k + 1)]
+                    } else {
+                        [centre, at(r, k + 1), at(r, k)]
+                    });
+                }
+            }
+            if signed_volume(&mesh) < 0.0 {
+                for t in &mut mesh.triangles {
+                    t.swap(1, 2);
+                }
+            }
+            mesh.validate()?;
+            Ok(mesh)
+        };
+        let mut out = vec![(format!("{part}_left"), one(1.0)?)];
+        if self.mirror {
+            out.push((format!("{part}_right"), one(-1.0)?));
+        }
+        Ok(out)
     }
 }
 

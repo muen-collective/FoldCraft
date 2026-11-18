@@ -32,6 +32,18 @@ fn main() {
         });
         std::fs::write(format!("{out}.landmarks.json"), side.to_string()).expect("write landmarks");
     }
+    // Separate meshes (removable arms) next to the body: <out>.<name>.obj
+    for (name, part) in &loaded.parts {
+        let mut text = String::new();
+        for v in &part.vertices {
+            let _ = writeln!(text, "v {:.6} {:.6} {:.6}", v.x, v.y, v.z);
+        }
+        for t in &part.triangles {
+            let _ = writeln!(text, "f {} {} {}", t[0] + 1, t[1] + 1, t[2] + 1);
+        }
+        std::fs::write(format!("{out}.{name}.obj"), text).expect("write part");
+        println!("  part {name}: {} vertices", part.vertices.len());
+    }
     let lines = loaded.guide_lines();
     std::fs::write(
         format!("{out}.lines.json"),

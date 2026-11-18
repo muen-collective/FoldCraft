@@ -130,8 +130,10 @@ fn a_bad_profile_is_refused_with_the_reason() {
     assert!(refused(&|d| d.profile[2].exponent = 9.0).contains("exponent"));
     assert!(refused(&|d| d.profile[2].half_width_m = f64::NAN).contains("not a number"));
     assert!(refused(&|d| d.sides = Some(15)).contains("even"));
-    assert!(refused(&|d| d.stand.pole_radius_m = 0.2).contains("thinner"));
-    assert!(refused(&|d| d.stand.base_height_m = 0.9).contains("reaches the torso"));
+    assert!(refused(&|d| d.stand.as_mut().unwrap().pole_radius_m = 0.2).contains("thinner"));
+    assert!(
+        refused(&|d| d.stand.as_mut().unwrap().base_height_m = 0.9).contains("reaches the torso")
+    );
 }
 
 #[test]
@@ -183,4 +185,133 @@ fn a_tilted_top_row_is_cut_square_to_a_leaning_neck_and_stays_closed() {
     let mut d = decl();
     d.profile[3].tilt = 0.9;
     assert!(d.build().err().unwrap().contains("tilt"));
+}
+
+// ---- full body: legs joined to the body, arms as separate meshes, no stand --------------------------------------
+
+fn full_body() -> GeneratorDecl {
+    let mut d = decl();
+    d.stand = None;
+    d.hem_height_m = Some(0.70);
+    let leg = |name: &str, part: Option<&str>, rows: &[([f64; 3], f64, f64)]| {
+        serde_json::from_value::<marvelous_cloth::form_builder::LimbDecl>(serde_json::json!({
+            "name": name, "part": part, "mirror": true, "level": part.is_none(),
+            "rows": rows.iter().map(|(p, rx, rz)| serde_json::json!({"p": p, "rx": rx, "rz": rz})).collect::<Vec<_>>()
+        }))
+        .unwrap()
+    };
+    d.limbs = vec![
+        // A leg from inside the torso's bottom down to the floor: thigh, knee, calf, ankle.
+        leg(
+            "leg",
+            None,
+            &[
+                ([0.09, 0.73, 0.0], 0.075, 0.08),
+                ([0.09, 0.62, 0.0], 0.08, 0.085),
+                ([0.085, 0.36, 0.005], 0.055, 0.055),
+                ([0.08, 0.20, -0.005], 0.05, 0.05),
+                ([0.075, 0.00, 0.0], 0.035, 0.035),
+            ],
+        ),
+        // An arm hung from the shoulder, a little away from the body.
+        leg(
+            "arm",
+            Some("arm"),
+            &[
+                ([0.17, 1.28, 0.0], 0.045, 0.045),
+                ([0.20, 1.00, 0.0], 0.04, 0.04),
+                ([0.22, 0.75, 0.0], 0.025, 0.025),
+            ],
+        ),
+    ];
+    d
+}
+
+#[test]
+fn a_full_body_form_stands_on_its_legs_with_no_stand_and_stays_closed() {
+    let d = full_body();
+    let mesh = d.build().unwrap();
+    let ymin = mesh.vertices.iter().map(|v| v.y).fold(f64::MAX, f64::min);
+    assert!(
+        ymin.abs() < 1e-9,
+        "the legs reach the floor: lowest point {ymin}"
+    );
+    assert!(signed_volume(&mesh) > 0.0);
+    // Every piece (torso, two legs) is closed and wound outward, so every directed edge is used once with its reverse.
+    let mut directed: HashMap<(usize, usize), usize> = HashMap::new();
+    for t in &mesh.triangles {
+        for k in 0..3 {
+            *directed.entry((t[k], t[(k + 1) % 3])).or_default() += 1;
+        }
+    }
+    assert!(
+        directed
+            .iter()
+            .all(|(&(a, b), &n)| n == 1 && directed.get(&(b, a)) == Some(&1))
+    );
+    // There is no pole: below the torso's bottom the only geometry is the two legs, one each side of the middle.
+    assert!(
+        mesh.vertices
+            .iter()
+            .filter(|v| v.y < 0.6)
+            .all(|v| v.x.abs() > 0.005),
+        "something stands on the middle"
+    );
+    // The height the form declares is the torso's top, not the arms.
+    assert!((d.height_m() - 1.30).abs() < 1e-9);
+}
+
+#[test]
+fn arms_are_separate_closed_meshes_mirrored_and_not_in_the_body() {
+    let d = full_body();
+    let body = d.build().unwrap();
+    let parts = d.build_parts().unwrap();
+    let names: Vec<_> = parts.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, ["arm_left", "arm_right"]);
+    let (left, right) = (&parts[0].1, &parts[1].1);
+    assert!(signed_volume(left) > 0.0 && signed_volume(right) > 0.0);
+    assert!(
+        left.vertices.iter().all(|v| v.x > 0.0) && right.vertices.iter().all(|v| v.x < 0.0),
+        "left is +x"
+    );
+    // Mirror images: the same heights.
+    let top = |m: &marvelous_cloth::avatar::SurfaceMesh| {
+        m.vertices.iter().map(|v| v.y).fold(f64::MIN, f64::max)
+    };
+    assert!((top(left) - top(right)).abs() < 1e-12);
+    // Nothing of the arms is in the body mesh: a vertex at the wrist's height and reach is not there.
+    assert!(
+        body.vertices
+            .iter()
+            .all(|v| !(v.x.abs() > 0.2 && v.y > 0.7 && v.y < 1.3))
+    );
+}
+
+#[test]
+fn a_stand_and_a_hem_height_together_or_neither_are_refused_and_bad_limbs_are_refused() {
+    let mut d = full_body();
+    d.hem_height_m = None;
+    assert!(
+        d.build()
+            .err()
+            .unwrap()
+            .contains("either a stand or hem_height_m")
+    );
+    let mut d = full_body();
+    d.stand = decl().stand;
+    assert!(
+        d.build()
+            .err()
+            .unwrap()
+            .contains("either a stand or hem_height_m")
+    );
+    let mut d = full_body();
+    d.limbs[0].rows.truncate(2);
+    assert!(d.build().err().unwrap().contains("at least 3 rows"));
+    let mut d = full_body();
+    d.limbs[0].rows[1].rx = 0.001;
+    assert!(d.build().err().unwrap().contains("1 cm"));
+    let mut d = full_body();
+    d.limbs[0].rows[1].p = d.limbs[0].rows[0].p;
+    assert!(d.build().err().unwrap().contains("5 mm apart"));
 }
