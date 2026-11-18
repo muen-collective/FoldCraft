@@ -24,5 +24,13 @@ fn main() {
         let _ = writeln!(s, "f {} {} {}", t[0] + 1, t[1] + 1, t[2] + 1);
     }
     std::fs::write(out, s).expect("write");
+    if let Some(sizer) = &loaded.sizer {
+        // The landmark heights as built (a form built to a chart row has moved them), and what each measures.
+        let side = serde_json::json!({
+            "knot_y_m": sizer.knot_heights(),
+            "girth_cm": sizer.base.girth_cm,
+        });
+        std::fs::write(format!("{out}.landmarks.json"), side.to_string()).expect("write landmarks");
+    }
     println!("wrote {out}: {} vertices", loaded.surface.vertices.len());
 }

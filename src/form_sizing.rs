@@ -43,6 +43,9 @@ pub struct KnotDecl {
 pub struct SizeChartRow {
     pub label: String,
     pub cm: BTreeMap<String, f64>,
+    /// Where this row's numbers come from (a table, its URL, who read it). Say so when it is unchecked.
+    #[serde(default)]
+    pub source: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -328,6 +331,11 @@ impl Sizer {
     }
 
     /// The allowed range, in centimetres, for each adjustable measurement.
+    /// Landmark heights on this form as it stands, metres, by name.
+    pub fn knot_heights(&self) -> BTreeMap<String, f64> {
+        self.knots.iter().map(|k| (k.name.clone(), k.y)).collect()
+    }
+
     pub fn ranges(&self) -> BTreeMap<String, (f64, f64)> {
         let mut out = BTreeMap::new();
         for (name, base) in &self.base.girth_cm {

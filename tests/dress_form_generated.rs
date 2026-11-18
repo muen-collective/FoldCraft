@@ -127,3 +127,109 @@ fn a_generator_that_disagrees_with_the_declared_height_is_refused() {
     );
     let _ = fs::remove_dir_all(&root);
 }
+
+// ---- dressform-female-us8: the shaped one -------------------------------------------------------------------
+
+const US8: &str = "dressform-female-us8";
+
+fn load_us8() -> avatar_catalog::LoadedAvatar {
+    let entries = avatar_catalog::discover(&assets_root());
+    let e = entries
+        .iter()
+        .find(|e| e.id == US8)
+        .expect("bundled form is discovered");
+    assert!(e.generated && e.available, "{:?}", e.reason);
+    e.load().expect("loads")
+}
+
+#[test]
+fn us8_is_built_to_its_chart_row_within_a_millimetre() {
+    let a = load_us8();
+    let m = &a.sizer.as_ref().unwrap().base.girth_cm;
+    for (key, want) in [
+        ("bust", 89.99),
+        ("underbust", 75.01),
+        ("waist", 67.49),
+        ("hip", 92.99),
+        ("neck", 34.01),
+    ] {
+        assert!((m[key] - want).abs() < 0.1, "{key}: {} vs {want}", m[key]);
+    }
+}
+
+#[test]
+fn us8_keeps_a_dense_shoulder_and_a_cylindrical_neck_cut_flat() {
+    let entries = avatar_catalog::discover(&assets_root());
+    let g = entries
+        .iter()
+        .find(|e| e.id == US8)
+        .unwrap()
+        .generator
+        .as_ref()
+        .unwrap();
+    // The shoulder is its own run of rows, 1 cm apart or closer, so it reads as a sloped plane.
+    let shoulder: Vec<_> = g
+        .profile
+        .iter()
+        .filter(|r| (0.68..=0.73).contains(&r.y_m))
+        .collect();
+    assert!(shoulder.len() >= 6, "{} shoulder rows", shoulder.len());
+    for w in shoulder.windows(2) {
+        assert!(
+            w[1].y_m - w[0].y_m <= 0.0101,
+            "gap {} -> {}",
+            w[0].y_m,
+            w[1].y_m
+        );
+    }
+    // No row anywhere is more than 5 cm from its neighbour above the hip.
+    for w in g.profile.windows(2) {
+        assert!(
+            w[1].y_m - w[0].y_m <= 0.0501,
+            "banding risk between {} and {}",
+            w[0].y_m,
+            w[1].y_m
+        );
+    }
+    // The neck is a cylinder: constant half-width, and it is cut flat, not tapered to a point.
+    let neck: Vec<_> = g.profile.iter().filter(|r| r.y_m >= 0.7555).collect();
+    assert!(neck.len() >= 3);
+    assert!(
+        neck.iter()
+            .all(|r| (r.half_width_m - neck[0].half_width_m).abs() < 1e-9)
+    );
+    let a = load_us8();
+    let top = a
+        .surface
+        .vertices
+        .iter()
+        .map(|v| v.y)
+        .fold(f64::MIN, f64::max);
+    let at_top = a
+        .surface
+        .vertices
+        .iter()
+        .filter(|v| (v.y - top).abs() < 1e-9)
+        .count();
+    assert!(
+        at_top > 90,
+        "the neck is capped flat: {at_top} vertices share the top height"
+    );
+}
+
+#[test]
+fn us8_resizing_never_moves_the_stand() {
+    let a = load_us8();
+    let stand = |s: &marvelous_cloth::avatar::SurfaceMesh| -> Vec<_> {
+        s.vertices.iter().filter(|v| v.y < 0.718).cloned().collect()
+    };
+    let before = stand(&a.surface);
+    assert!(before.len() > 100);
+    let mut flat = BTreeMap::new();
+    flat.insert("bust".to_owned(), 96.0);
+    flat.insert("waist".to_owned(), 74.0);
+    flat.insert("hip".to_owned(), 100.0);
+    let (b, r) = a.sized(&Targets::from_flat(&flat).unwrap()).unwrap();
+    assert_eq!(before, stand(&b.surface), "stand vertices must not move");
+    assert!((r.measured.girth_cm["bust"] - 96.0).abs() < 0.1);
+}
