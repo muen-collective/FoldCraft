@@ -21,6 +21,7 @@ pub mod document;
 pub mod energy;
 pub(crate) mod energy_factors;
 pub mod fabrics;
+pub mod form_sizing;
 pub mod fitting;
 pub mod garment;
 pub mod gltf_avatar;

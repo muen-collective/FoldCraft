@@ -51,3 +51,35 @@ Unknown fields are refused.
 
 Per solver substep: no body 235 ms, the 26,700-triangle mannequin 357 ms, a 24,000-triangle form with the garment
 resting on it 613 ms. None of these is interactive. A lighter collider for the CPU preview is the obvious next step.
+
+## Resizing a form to measurements (`form_sizing`)
+
+A form with a `sizing` block in `form.json` can be re-shaped to girths and lengths. The method is the simplest one
+that can be checked: **radial scaling about the form's vertical axis by a factor that varies smoothly with height**,
+and a **piecewise-linear remap of height between named landmarks** (`hip`, `waist`, optional `underbust`, `bust`,
+`neck`). It grades one scan; it is not a body model. A girth target scales width and depth together, so the form
+keeps its proportions; lengths move the landmarks and stretch what lies between them in proportion.
+
+```json
+"sizing": {
+  "knots": [ {"name": "hip", "y_m": 0.1264, "basis": "..."}, ... ],
+  "chart": [ {"label": "US 8 / UK 12", "cm": {"bust": 89.99, "waist": 67.49, ...}} ]
+}
+```
+
+- **Every landmark carries a `basis`**; an assumed one says so (the under-bust on the bundled scan is assumed to
+  be 7 cm below the bust line).
+- **The result is measured back off the resized mesh** (convex-hull girth of a 6 mm slab at each landmark), so the
+  value shown is what the form measures, not what was asked for.
+- **Range.** A target must be 80-125 % of the scan's own measurement, else the whole request is refused with the
+  range, and nothing changes. These limits are an assumption, not a derived result.
+- **Not adjustable yet:** shoulder length, front waist length, bust-point separation, high hip. The scan has no
+  landmark for them.
+
+| Route | |
+|---|---|
+| `GET /api/avatar/size` | per measurement: base, current (measured), min, max; tape heights and girths; the chart |
+| `POST /api/avatar/size` | `{"targets_cm": {"bust": 95, "back_waist_length": 44, ...}}`, or `{"targets_cm": null}` to reset |
+
+Selecting another body clears the sizes. The preview and `GET /api/avatar/mesh` use the resized form, and the
+shoulder line the garment is lifted onto moves with the landmarks.

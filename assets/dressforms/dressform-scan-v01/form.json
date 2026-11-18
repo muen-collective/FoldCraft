@@ -4,8 +4,56 @@
   "mesh": "dressform-torso.obj",
   "height_m": 0.8126,
   "shoulder_height_m": 0.6398,
-  "dimensions_cm": { "bust": 91.4, "waist": 66.6, "hip": 93.1, "neck": 32.2 },
+  "dimensions_cm": {
+    "bust": 91.4,
+    "waist": 66.6,
+    "hip": 93.1,
+    "neck": 32.2
+  },
   "source": "Photogrammetry scan of a women's torso form supplied by the founder; origin not stated. Straightened, scaled to the founder's girths, cut above the scan's base artifact and decimated to 24,000 triangles in Blender (scripts/avatar/prepare_dressform.py in the Darts repository).",
   "license": "unknown: not for redistribution until the origin is confirmed",
-  "provenance": "Scale fitted to bust, waist and hip girths (2.9 percent spread); neck, neck-to-waist and waist-to-hip are checks. Front chosen by the hip-versus-waist test and confirmed on renders."
+  "provenance": "Scale fitted to bust, waist and hip girths (2.9 percent spread); neck, neck-to-waist and waist-to-hip are checks. Front chosen by the hip-versus-waist test and confirmed on renders.",
+  "sizing": {
+    "knots": [
+      {
+        "name": "hip",
+        "y_m": 0.1264,
+        "basis": "widest girth below the waist, found on the scan by prepare_dressform.py"
+      },
+      {
+        "name": "waist",
+        "y_m": 0.3361,
+        "basis": "narrowest girth between hip and bust, found on the scan"
+      },
+      {
+        "name": "underbust",
+        "y_m": 0.4694,
+        "basis": "ASSUMED: 7 cm below the bust line. The scan has no distinct under-bust feature"
+      },
+      {
+        "name": "bust",
+        "y_m": 0.5394,
+        "basis": "widest girth above the waist, found on the scan"
+      },
+      {
+        "name": "neck",
+        "y_m": 0.7555,
+        "basis": "95.5 percent of the full scan height, where the neck is taken for back waist length; a tapered neck has no single girth"
+      }
+    ],
+    "chart": [
+      {
+        "label": "US 8 / UK 12 (bust 35.43 in)",
+        "cm": {
+          "bust": 89.99,
+          "underbust": 75.01,
+          "waist": 67.49,
+          "hip": 92.99,
+          "neck": 34.01,
+          "back_waist_length": 42.01,
+          "waist_to_hip": 20.5
+        }
+      }
+    ]
+  }
 }

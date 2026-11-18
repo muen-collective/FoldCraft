@@ -13,6 +13,7 @@
 //!
 //! CPU only: nothing here touches wgpu or the UI toolkit.
 use crate::avatar::SurfaceMesh;
+use crate::form_sizing::{Resized, Sizer, SizingDecl, Targets};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -50,6 +51,8 @@ pub struct AvatarEntry {
     /// Where the garment's top edge is placed. `None` leaves a garment where its template put it.
     pub shoulder_height_m: Option<f64>,
     pub dimensions_cm: BTreeMap<String, f64>,
+    /// Landmarks and size chart, when the form can be resized.
+    pub sizing: Option<SizingDecl>,
     pub source: String,
     pub license: String,
 }
@@ -72,6 +75,8 @@ struct FormFile {
     #[serde(default)]
     #[allow(dead_code)]
     provenance: String,
+    #[serde(default)]
+    sizing: Option<SizingDecl>,
 }
 
 /// An avatar whose mesh was read and checked.
@@ -79,6 +84,23 @@ pub struct LoadedAvatar {
     pub id: String,
     pub surface: Arc<SurfaceMesh>,
     pub shoulder_height_m: Option<f64>,
+    /// Present when the form declares landmarks, so it can be resized.
+    pub sizer: Option<Sizer>,
+}
+
+impl LoadedAvatar {
+    /// The same form resized to `targets`; the shoulder line moves with the landmarks.
+    pub fn sized(&self, targets: &Targets) -> Result<(LoadedAvatar, Resized), String> {
+        let sizer = self.sizer.as_ref().ok_or("this avatar cannot be resized")?;
+        let resized = sizer.resize(targets)?;
+        let loaded = LoadedAvatar {
+            id: self.id.clone(),
+            surface: Arc::new(resized.surface.clone()),
+            shoulder_height_m: self.shoulder_height_m.map(|y| resized.map_y(y)),
+            sizer: None,
+        };
+        Ok((loaded, resized))
+    }
 }
 
 /// Where the assets live: `CLOTH_ASSETS`, else `assets` beside the working directory.
@@ -118,6 +140,7 @@ fn mannequin(root: &Path) -> AvatarEntry {
         height_m: Some(1.75),
         shoulder_height_m: None,
         dimensions_cm: BTreeMap::new(),
+        sizing: None,
         source:
             "MakeHuman community base mesh, extracted and normalised by scripts/prepare-avatar.py"
                 .to_owned(),
@@ -136,6 +159,7 @@ fn unavailable(id: String, title: String, reason: String) -> AvatarEntry {
         height_m: None,
         shoulder_height_m: None,
         dimensions_cm: BTreeMap::new(),
+        sizing: None,
         source: String::new(),
         license: String::new(),
     }
@@ -178,6 +202,9 @@ fn read_form(dir: &Path) -> Result<AvatarEntry, String> {
             "form.json: shoulder_height_m must be positive and not above height_m".to_owned(),
         );
     }
+    if let Some(sizing) = &form.sizing {
+        sizing.validate(form.height_m)?;
+    }
     let mesh = dir.join(&form.mesh);
     let present = mesh.is_file();
     Ok(AvatarEntry {
@@ -190,6 +217,7 @@ fn read_form(dir: &Path) -> Result<AvatarEntry, String> {
         height_m: Some(form.height_m),
         shoulder_height_m: Some(form.shoulder_height_m),
         dimensions_cm: form.dimensions_cm,
+        sizing: form.sizing,
         source: form.source,
         license: form.license,
     })
@@ -235,10 +263,16 @@ impl AvatarEntry {
         if let Some(declared) = self.height_m.filter(|_| self.kind == AvatarKind::DressForm) {
             check_height(&surface, declared)?;
         }
+        let surface = Arc::new(surface);
+        let sizer = match &self.sizing {
+            Some(decl) => Some(Sizer::new(Arc::clone(&surface), decl)?),
+            None => None,
+        };
         Ok(LoadedAvatar {
             id: self.id.clone(),
-            surface: Arc::new(surface),
+            surface,
             shoulder_height_m: self.shoulder_height_m,
+            sizer,
         })
     }
 }

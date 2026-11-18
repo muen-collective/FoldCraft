@@ -19,6 +19,8 @@ type Shared = Arc<Mutex<Client>>;
 static SIM: std::sync::Mutex<Option<crate::preview::Preview>> = std::sync::Mutex::new(None);
 /// The body the preview drapes on: an `avatar_catalog` id, or none. Selecting resets the preview.
 static AVATAR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// The measurements the selected form was resized to (`form_sizing`), or none: the scan as it is.
+static AVATAR_SIZE: std::sync::Mutex<Option<crate::form_sizing::Targets>> = std::sync::Mutex::new(None);
 type ApiResult = Result<Json<Value>, (StatusCode, Json<Value>)>;
 
 const MAX_TEMPLATE_BYTES: usize = 8 * 1024 * 1024;
@@ -48,6 +50,7 @@ pub fn router() -> std::io::Result<Router> {
         .route("/api/avatars", get(avatars))
         .route("/api/avatar", post(select_avatar))
         .route("/api/avatar/mesh", get(avatar_mesh))
+        .route("/api/avatar/size", get(avatar_size).post(set_avatar_size))
         .route("/api/undo", post(undo))
         .route("/api/redo", post(redo))
         .with_state(state))
@@ -314,8 +317,8 @@ fn selected_avatar_id() -> Option<String> {
     AVATAR.lock().ok().and_then(|guard| guard.clone())
 }
 
-/// The selected body, read and checked; `None` when no body is selected.
-fn load_selected() -> Result<Option<crate::avatar_catalog::LoadedAvatar>, String> {
+/// The selected body as the scan has it, with its sizer; `None` when no body is selected.
+fn load_selected_raw() -> Result<Option<crate::avatar_catalog::LoadedAvatar>, String> {
     let Some(id) = selected_avatar_id() else {
         return Ok(None);
     };
@@ -325,6 +328,108 @@ fn load_selected() -> Result<Option<crate::avatar_catalog::LoadedAvatar>, String
         .find(|entry| entry.id == id)
         .ok_or_else(|| format!("avatar {id} is no longer installed"))?;
     entry.load().map(Some)
+}
+
+/// The selected body at the size it was set to: this is the collider and the drawing.
+fn load_selected() -> Result<Option<crate::avatar_catalog::LoadedAvatar>, String> {
+    let Some(raw) = load_selected_raw()? else {
+        return Ok(None);
+    };
+    let targets = AVATAR_SIZE.lock().ok().and_then(|guard| guard.clone());
+    match targets.filter(|t| !t.is_empty()) {
+        Some(targets) => raw.sized(&targets).map(|(sized, _)| Some(sized)),
+        None => Ok(Some(raw)),
+    }
+}
+
+fn size_failure(detail: String) -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({"error": {"code": "size_out_of_range", "detail": detail}})),
+    )
+}
+
+fn measurement_label(key: &str) -> &'static str {
+    match key {
+        "bust" => "Bust",
+        "underbust" => "Under-bust",
+        "waist" => "Waist",
+        "hip" => "Hip",
+        "neck" => "Neck",
+        "back_waist_length" => "Back waist length",
+        "waist_to_hip" => "Waist to hip",
+        _ => "",
+    }
+}
+
+/// What the selected form measures at the size it is set to, read back off its resized mesh.
+fn size_report(
+    raw: &crate::avatar_catalog::LoadedAvatar,
+    targets: &crate::form_sizing::Targets,
+) -> Result<Value, String> {
+    let Some(sizer) = raw.sizer.as_ref() else {
+        return Ok(json!({"avatar": raw.id, "sizable": false}));
+    };
+    let resized = sizer.resize(targets)?;
+    let ranges = sizer.ranges();
+    let field = |key: &str, base: f64, current: f64| {
+        let (low, high) = ranges[key];
+        json!({"key": key, "label": measurement_label(key), "base_cm": base, "current_cm": current,
+               "min_cm": low, "max_cm": high})
+    };
+    let mut fields = Vec::new();
+    for key in crate::form_sizing::GIRTH_KEYS {
+        if let Some(base) = sizer.base.girth_cm.get(key) {
+            fields.push(field(key, *base, resized.measured.girth_cm[key]));
+        }
+    }
+    fields.push(field("back_waist_length", sizer.base.back_waist_length_cm, resized.measured.back_waist_length_cm));
+    fields.push(field("waist_to_hip", sizer.base.waist_to_hip_cm, resized.measured.waist_to_hip_cm));
+    let tapes: Vec<Value> = resized
+        .knot_y
+        .iter()
+        .map(|(key, y)| json!({"key": key, "label": measurement_label(key), "y_m": y, "girth_cm": resized.measured.girth_cm[key]}))
+        .collect();
+    Ok(json!({
+        "avatar": raw.id, "sizable": true, "units": "cm", "fields": fields, "tapes": tapes,
+        "chart": sizer.chart, "basis": sizer.basis,
+        "resized": !targets.is_empty(),
+    }))
+}
+
+/// The selected form's measurements, limits, size chart and tape positions.
+async fn avatar_size() -> ApiResult {
+    let raw = load_selected_raw()
+        .map_err(avatar_failure)?
+        .ok_or_else(|| bad_request("no avatar is selected"))?;
+    let targets = AVATAR_SIZE.lock().ok().and_then(|g| g.clone()).unwrap_or_default();
+    Ok(Json(size_report(&raw, &targets).map_err(size_failure)?))
+}
+
+/// Resize the selected form: `{"targets_cm": {"bust": 95.0, ...}}`, or `{"targets_cm": null}` for the scan as it is.
+/// A request outside the form's range is refused whole and nothing changes.
+async fn set_avatar_size(Json(body): Json<Value>) -> ApiResult {
+    let raw = load_selected_raw()
+        .map_err(avatar_failure)?
+        .ok_or_else(|| bad_request("no avatar is selected"))?;
+    let targets = match body.get("targets_cm") {
+        None | Some(Value::Null) => crate::form_sizing::Targets::default(),
+        Some(Value::Object(map)) => {
+            let mut flat = std::collections::BTreeMap::new();
+            for (key, value) in map {
+                let number = value.as_f64().ok_or_else(|| bad_request(format!("{key} must be a number of centimetres")))?;
+                flat.insert(key.clone(), number);
+            }
+            crate::form_sizing::Targets::from_flat(&flat).map_err(bad_request)?
+        }
+        Some(_) => return Err(bad_request("targets_cm must be an object or null")),
+    };
+    let report = size_report(&raw, &targets).map_err(size_failure)?;
+    *AVATAR_SIZE.lock().map_err(|e| bad_request(e.to_string()))? = (!targets.is_empty()).then_some(targets);
+    if let Ok(mut sim) = SIM.lock() {
+        *sim = None;
+    }
+    Ok(Json(report))
 }
 
 /// Every body the preview can use, with whether its mesh is installed and why not.
@@ -350,6 +455,9 @@ async fn select_avatar(Json(body): Json<Value>) -> ApiResult {
         entry.load().map_err(avatar_failure)?;
     }
     *AVATAR.lock().map_err(|e| bad_request(e.to_string()))? = id.clone();
+    if let Ok(mut size) = AVATAR_SIZE.lock() {
+        *size = None;
+    }
     if let Ok(mut sim) = SIM.lock() {
         *sim = None;
     }
