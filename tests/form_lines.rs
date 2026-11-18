@@ -34,7 +34,10 @@ fn there_are_four_tape_lines_and_eight_seam_lines_and_no_stand() {
         .map(|l| l.name.as_str())
         .collect();
     assert_eq!(tapes, ["bust", "underbust", "waist", "hip"]);
-    assert_eq!(lines.iter().filter(|l| l.kind == LineKind::Seam).count(), 8);
+    assert_eq!(
+        lines.iter().filter(|l| l.kind == LineKind::Seam).count(),
+        10
+    ); // 8 seams and 2 armholes
     for l in &lines {
         assert!(
             l.points.iter().all(|p| p[1] >= a.torso_from_m),
@@ -135,4 +138,37 @@ fn a_form_with_no_landmarks_still_gets_seam_lines_and_no_tapes() {
     );
     assert!(lines.iter().all(|l| l.kind == LineKind::Seam));
     assert!(lines.iter().any(|l| l.name == "centre_front"));
+}
+
+#[test]
+fn an_armhole_is_a_closed_oval_on_each_shoulder_between_bust_and_neck() {
+    let a = us8();
+    let lines = a.guide_lines();
+    let (l, r) = (
+        lines
+            .iter()
+            .find(|l| l.name == "armhole_left")
+            .expect("left armhole"),
+        lines
+            .iter()
+            .find(|l| l.name == "armhole_right")
+            .expect("right armhole"),
+    );
+    assert!(l.closed && r.closed && l.points.len() == 48 && r.points.len() == 48);
+    assert!(l.points.iter().all(|p| p[0] > 0.0) && r.points.iter().all(|p| p[0] < 0.0));
+    let (bust, neck) = (a.landmarks["bust"], a.landmarks["neck"]);
+    for p in l.points.iter().chain(&r.points) {
+        assert!(
+            p[1] > bust && p[1] < neck,
+            "armhole point at y {} outside bust..neck",
+            p[1]
+        );
+    }
+    // Mirrored: the same heights on both sides, and the same reach out from the middle to within a centimetre.
+    for (p, q) in l.points.iter().zip(&r.points) {
+        assert!(
+            (p[1] - q[1]).abs() < 1e-9 && (p[0] + q[0]).abs() < 0.01,
+            "{p:?} vs {q:?}"
+        );
+    }
 }

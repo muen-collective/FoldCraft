@@ -138,6 +138,33 @@ fn longest_run(closed: bool, pts: &[DVec3], keep: impl Fn(DVec3) -> bool) -> Vec
     best
 }
 
+/// The x of the outermost surface of the torso at (y, z), on the +x side when `sign` > 0, else the -x side.
+/// A ray along x through the mesh: the point a pen would touch on the shoulder from the side.
+fn surface_x(mesh: &SurfaceMesh, torso_from: f64, y: f64, z: f64, sign: f64) -> Option<f64> {
+    let mut best: Option<f64> = None;
+    for t in &mesh.triangles {
+        let [a, b, c] = t.map(|i| mesh.vertices[i]);
+        if a.y < torso_from || b.y < torso_from || c.y < torso_from {
+            continue;
+        }
+        // Barycentric coordinates of (y, z) in the triangle's projection on the y-z plane.
+        let d = (b.y - a.y) * (c.z - a.z) - (c.y - a.y) * (b.z - a.z);
+        if d.abs() < 1e-15 {
+            continue;
+        }
+        let u = ((y - a.y) * (c.z - a.z) - (c.y - a.y) * (z - a.z)) / d;
+        let v = ((b.y - a.y) * (z - a.z) - (y - a.y) * (b.z - a.z)) / d;
+        if u < -1e-9 || v < -1e-9 || u + v > 1.0 + 1e-9 {
+            continue;
+        }
+        let x = a.x + u * (b.x - a.x) + v * (c.x - a.x);
+        if x * sign > 0.0 && best.is_none_or(|b| x * sign > b * sign) {
+            best = Some(x);
+        }
+    }
+    best
+}
+
 /// Where each landmark is, and the stretch of the mesh that is the torso (the stand is below `torso_from`).
 pub struct LineSpec<'a> {
     pub landmarks: &'a BTreeMap<String, f64>,
@@ -243,6 +270,42 @@ pub fn guide_lines(mesh: &SurfaceMesh, spec: &LineSpec) -> Vec<GuideLine> {
         seam(&format!("side_{side}"), Axis::Z, zc, &move |p| {
             p.x * sign > 0.0
         });
+    }
+    // Armholes: an oval on each shoulder cast along x onto the surface, so it follows the form. Placed from the
+    // landmarks (the real forms' shoulders are separate clip-in caps; this is where they meet the torso). The
+    // proportions are ASSUMED: 13 cm tall of a 20 cm bust-to-neck run, 80 percent as wide as tall, centred between
+    // the front and back of the torso at its height.
+    if let (Some(&bust), Some(&neck)) = (spec.landmarks.get("bust"), spec.landmarks.get("neck")) {
+        let run = neck - bust;
+        let (cy, ay) = (bust + 0.375 * run, 0.325 * run);
+        let band: Vec<f64> = torso
+            .iter()
+            .filter(|v| (v.y - cy).abs() < 0.01)
+            .map(|v| v.z)
+            .collect();
+        if !band.is_empty() {
+            let cz = (band.iter().cloned().fold(f64::MIN, f64::max)
+                + band.iter().cloned().fold(f64::MAX, f64::min))
+                / 2.0;
+            let az = 0.8 * ay;
+            for (side, sign) in [("left", 1.0), ("right", -1.0)] {
+                let ring: Vec<[f64; 3]> = (0..48)
+                    .filter_map(|i| {
+                        let t = std::f64::consts::TAU * i as f64 / 48.0;
+                        let (y, z) = (cy + ay * t.sin(), cz + az * t.cos());
+                        surface_x(mesh, spec.torso_from_m, y, z, sign).map(|x| [x, y, z])
+                    })
+                    .collect();
+                if ring.len() == 48 {
+                    lines.push(GuideLine {
+                        name: format!("armhole_{side}"),
+                        kind: LineKind::Seam,
+                        closed: true,
+                        points: ring,
+                    });
+                }
+            }
+        }
     }
     lines
 }
