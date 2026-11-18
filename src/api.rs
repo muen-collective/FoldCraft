@@ -52,6 +52,7 @@ pub fn router() -> std::io::Result<Router> {
         .route("/api/avatar", post(select_avatar))
         .route("/api/avatar/mesh", get(avatar_mesh))
         .route("/api/avatar/lines", get(avatar_lines))
+        .route("/api/avatar/guide", get(avatar_guide))
         .route("/api/avatar/size", get(avatar_size).post(set_avatar_size))
         .route("/api/undo", post(undo))
         .route("/api/redo", post(redo))
@@ -497,7 +498,6 @@ async fn select_avatar(Json(body): Json<Value>) -> ApiResult {
     Ok(Json(json!({"selected": id})))
 }
 
-/// The selected body's surface, for drawing. Static geometry in metres, to the tenth of a millimetre.
 /// Tape lines and seam lines cut from the selected form, as polylines in metres (Y up, +Z front).
 async fn avatar_lines() -> ApiResult {
     let avatar = load_selected()
@@ -508,6 +508,26 @@ async fn avatar_lines() -> ApiResult {
     ))
 }
 
+/// The selected form's flat guide: its developed outline and landmark lines, to draw behind the pattern pieces so they can be aligned to it.
+/// `?side_offset_mm=` moves the side seam behind (positive) or ahead of the form's side plane.
+async fn avatar_guide(
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> ApiResult {
+    let avatar = load_selected()
+        .map_err(avatar_failure)?
+        .ok_or_else(|| bad_request("no avatar is selected"))?;
+    let offset_m = query
+        .get("side_offset_mm")
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|v| v.is_finite() && v.abs() <= 200.0)
+        .unwrap_or(0.0)
+        / 1000.0;
+    let guide = crate::form_guide::flat_guide(&avatar, offset_m)
+        .ok_or_else(|| bad_request("this form declares no landmarks, so it has no guide"))?;
+    Ok(Json(json!({"avatar": avatar.id, "guide": guide})))
+}
+
+/// The selected body's surface, for drawing. Static geometry in metres, to the tenth of a millimetre.
 async fn avatar_mesh() -> ApiResult {
     let avatar = load_selected()
         .map_err(avatar_failure)?

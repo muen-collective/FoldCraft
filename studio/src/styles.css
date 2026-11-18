@@ -360,3 +360,15 @@ button, select { font: inherit; color: inherit; }
 .drape-caption strong { color: var(--warn); font-weight: 600; }
 .drape-transport .drape-body { max-width: 190px; font-size: 11px; }
 .drape-transport .drape-label { font-size: 10px; color: var(--text-subtle); padding: 0 4px; }
+
+/* The form's flat guide, behind the pieces: it never takes a click. */
+.form-guide { pointer-events: none; }
+.form-guide .guide-body { fill: rgba(140, 170, 255, 0.07); stroke: rgba(160, 190, 255, 0.55); stroke-width: 1.2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.form-guide .guide-arm { fill: rgba(140, 170, 255, 0.03); stroke: rgba(160, 190, 255, 0.3); stroke-width: 1; stroke-dasharray: 3 5; vector-effect: non-scaling-stroke; }
+.form-guide .guide-centre { stroke: rgba(235, 235, 245, 0.6); stroke-width: 1; stroke-dasharray: 8 5; vector-effect: non-scaling-stroke; }
+.form-guide .guide-line { stroke: rgba(120, 210, 130, 0.85); stroke-width: 1; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
+.form-guide .guide-line[data-name="floor"] { stroke: rgba(235, 235, 245, 0.45); stroke-dasharray: none; }
+.form-guide .guide-label { fill: rgba(150, 190, 255, 0.9); font-family: inherit; }
+.form-guide .guide-point { fill: rgba(150, 190, 255, 0.9); stroke: none; }
+.guide-controls { display: flex; gap: 8px; align-items: center; font-size: 12px; }
+.guide-controls input[type="number"] { width: 4.2em; }

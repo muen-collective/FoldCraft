@@ -115,6 +115,31 @@ export type AvatarMesh = {
   triangles: [number, number, number][];
 };
 
+export type GuideLandmark = {
+  name: string;
+  y: number;
+  half_front: number;
+  half_back: number;
+  leg_front: number | null;
+  leg_back: number | null;
+};
+export type GuidePoint = { name: string; x: number; y: number };
+export type GuideSide = { outline: [number, number][]; centre: [[number, number], [number, number]] };
+export type GuideLeg = { side: string; front: [number, number][]; back: [number, number][] };
+export type GuideArm = { name: string; outline: [number, number][] };
+/** The form laid flat, in metres: x across (centre at 0), y height above the floor. Widths are developed along the surface. */
+export type FlatGuide = {
+  units: "metres";
+  top_m: number;
+  bottom_m: number;
+  front: GuideSide;
+  back: GuideSide;
+  landmarks: GuideLandmark[];
+  points: GuidePoint[];
+  legs: GuideLeg[];
+  arms: GuideArm[];
+};
+
 export type DrapeSnapshot = {
   solver: string;
   claim: string;
@@ -198,6 +223,8 @@ export const api = {
       body: JSON.stringify({ id }),
     }),
   avatarMesh: () => request<AvatarMesh>("/api/avatar/mesh"),
+  avatarGuide: (sideOffsetMm: number) =>
+    request<{ avatar: string; guide: FlatGuide }>(`/api/avatar/guide?side_offset_mm=${sideOffsetMm}`),
   download: async (kind: "svg" | "print-svg") => {
     const response = await fetch("/api/export/" + kind);
     if (!response.ok) throw new Error("export failed");

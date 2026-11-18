@@ -22,6 +22,7 @@ pub mod energy;
 pub(crate) mod energy_factors;
 pub mod fabrics;
 pub mod form_builder;
+pub mod form_guide;
 pub mod form_lines;
 pub mod form_sizing;
 pub mod fitting;

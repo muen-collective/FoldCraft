@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  type FlatGuide,
   api,
   type BoardEdge,
   type CatalogEntry,
@@ -28,6 +29,17 @@ export default function App() {
   const [drape, setDrape] = useState<DrapeSnapshot | null>(null);
   const [avatars, setAvatars] = useState<AvatarList | null>(null);
   const [avatarMesh, setAvatarMesh] = useState<AvatarMesh | null>(null);
+  // The form's flat guide, drawn behind the pieces to align them to the form.
+  const [guide, setGuide] = useState<FlatGuide | null>(null);
+  const [guideOn, setGuideOn] = useState(true);
+  const [guideFace, setGuideFace] = useState<"front" | "back">("front");
+  const [guideCf, setGuideCf] = useState<"left" | "centre" | "right">("centre");
+  // A bodice's side seam usually sits behind the form's side: 50 mm matches the sloper the guide was tested against.
+  const [guideSide, setGuideSide] = useState(50);
+  const [guideNudge, setGuideNudge] = useState({ x: 0, y: 0 });
+  // Which piece the guide is aligned to ("" = the first one called front/back), and the guide line pinned to the piece's top.
+  const [guidePiece, setGuidePiece] = useState("");
+  const [guideAnchor, setGuideAnchor] = useState<"auto" | "neck" | "waist">("auto");
   const [playing, setPlaying] = useState(false);
   const playRef = useRef(false);
   const stepBusy = useRef(false);
@@ -95,6 +107,26 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!avatars?.selected) {
+      setGuide(null);
+      return;
+    }
+    const timer = window.setTimeout(async () => {
+      try {
+        const reply = await api.avatarGuide(guideSide);
+        if (!cancelled) setGuide(reply.guide);
+      } catch {
+        if (!cancelled) setGuide(null); // a form without landmarks has no guide
+      }
+    }, 150);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [avatars?.selected, guideSide]);
 
   const chooseAvatar = useCallback(async (id: string | null) => {
     setPlaying(false);
@@ -276,6 +308,41 @@ export default function App() {
           <span className="drape-label">{drape ? "preview · not a fit" : "no drape"}</span>
         </div>
 
+        {guide ? (
+          <div className="transport guide-controls" title="The form laid flat, behind the pattern">
+            <label>
+              <input type="checkbox" checked={guideOn} onChange={(event) => setGuideOn(event.target.checked)} /> Guide
+            </label>
+            <select aria-label="Guide face" value={guideFace} onChange={(event) => setGuideFace(event.target.value as "front" | "back")}>
+              <option value="front">front</option>
+              <option value="back">back</option>
+            </select>
+            <select aria-label="Align to piece" value={guidePiece} onChange={(event) => setGuidePiece(event.target.value)} title="The piece whose top and centre the guide is aligned to">
+              <option value="">align to: first {guideFace}</option>
+              {[...new Set((preview?.paths ?? []).filter((path) => path.closed && !path.internal).map((path) => path.panel))].map((id) => (
+                <option key={id} value={id}>{id}</option>
+              ))}
+            </select>
+            <select aria-label="Guide anchor" value={guideAnchor} onChange={(event) => setGuideAnchor(event.target.value as "auto" | "neck" | "waist")} title="Which line of the form sits at the piece's top: the high-point shoulder (a bodice) or the waist (a trouser or skirt)">
+              <option value="auto">anchor: auto</option>
+              <option value="neck">anchor: HPS</option>
+              <option value="waist">anchor: waist</option>
+            </select>
+            <select aria-label="Centre line at" value={guideCf} onChange={(event) => setGuideCf(event.target.value as "left" | "centre" | "right")} title="Where the centre front (or back) of the form sits on the first matching piece">
+              <option value="centre">centre at middle</option>
+              <option value="left">centre at left edge</option>
+              <option value="right">centre at right edge</option>
+            </select>
+            <label title="How far behind the form's side the side seam sits, in millimetres">
+              side <input type="number" step="5" min="-100" max="100" value={guideSide} onChange={(event) => setGuideSide(Number(event.target.value) || 0)} />
+            </label>
+            <label title="Nudge the guide, millimetres (right, down)">
+              nudge <input type="number" step="5" value={guideNudge.x} onChange={(event) => setGuideNudge((n) => ({ ...n, x: Number(event.target.value) || 0 }))} />
+              <input type="number" step="5" value={guideNudge.y} onChange={(event) => setGuideNudge((n) => ({ ...n, y: Number(event.target.value) || 0 }))} />
+            </label>
+          </div>
+        ) : null}
+
         <div className="revision" title="Document revision. Every change bumps it.">
           <span className="dot" data-live={Boolean(document)} />
           rev {summary?.revision ?? "—"}
@@ -310,6 +377,12 @@ export default function App() {
               panelColour={panelColour}
               onSelect={(panel) => setSelection({ panel, edge: null })}
               onPickEdge={(edge) => setSelection({ panel: edge.panel, edge })}
+              guide={guideOn ? guide : null}
+              guideFace={guideFace}
+              guideCf={guideCf}
+              guideNudge={guideNudge}
+              guidePiece={guidePiece}
+              guideAnchor={guideAnchor}
             />
           ) : (
             <div className="board-empty">
@@ -381,7 +454,19 @@ function Board({
   panelColour,
   onSelect,
   onPickEdge,
+  guide,
+  guideFace,
+  guideCf,
+  guideNudge,
+  guidePiece,
+  guideAnchor,
 }: {
+  guidePiece: string;
+  guideAnchor: "auto" | "neck" | "waist";
+  guide: FlatGuide | null;
+  guideFace: "front" | "back";
+  guideCf: "left" | "centre" | "right";
+  guideNudge: { x: number; y: number };
   preview: Preview;
   ghosts: ImportContour[];
   edges: BoardEdge[];
@@ -408,6 +493,42 @@ function Board({
     w: fit.w / zoom,
     h: fit.h / zoom,
   };
+
+  // The guide, mapped onto the board. Board: x right, y down, metres. Guide: x across (the form's left is +x, which is the viewer's right in a
+  // front view), y height. The guide is anchored to the first piece called front (or back): its centre line at the piece's middle or an edge,
+  // and the high-point shoulder (a bodice) or the waist (a trouser or skirt) at the piece's top.
+  const layer = useMemo(() => {
+    if (!guide) return null;
+    const closed = preview.paths.filter((p) => p.closed && !p.internal);
+    const pool = closed.filter((p) => (guideFace === "front" ? /front/i : /back/i).test(p.panel));
+    const named = guidePiece ? closed.find((p) => p.panel === guidePiece) : undefined;
+    const piece = named ?? (pool.length ? pool : closed)[0];
+    if (!piece) return null;
+    const xs = piece.points.map((q) => q[0]);
+    const ys = piece.points.map((q) => q[1]);
+    const [minX, maxX, minY] = [Math.min(...xs), Math.max(...xs), Math.min(...ys)];
+    const cfx = (guideCf === "left" ? minX : guideCf === "right" ? maxX : (minX + maxX) / 2) + guideNudge.x / 1000;
+    const waistKind = closed.some((p) => /trouser|pant|skirt/i.test(p.panel));
+    const anchorName = guideAnchor === "auto" ? (waistKind ? "waist" : "neck") : guideAnchor;
+    const anchor = guide.landmarks.find((l) => l.name === anchorName) ?? guide.landmarks[0];
+    const top = minY + guideNudge.y / 1000;
+    const X = (x: number) => cfx + x;
+    const Y = (y: number) => top + (anchor.y - y);
+    const poly = (pts: [number, number][]) => pts.map(([x, y]) => `${X(x)},${Y(y)}`).join(" ");
+    const side = guideFace === "front" ? guide.front : guide.back;
+    return {
+      anchorName: anchor.name,
+      torso: poly(side.outline),
+      legs: guide.legs.map((l) => ({ side: l.side, points: poly(guideFace === "front" ? l.front : l.back) })),
+      arms: guide.arms.map((a) => ({ name: a.name, points: poly(a.outline) })),
+      centre: { x: X(0), y1: Y(side.centre[0][1]), y2: Y(guide.landmarks.find((l) => l.name === "floor")?.y ?? side.centre[1][1]) },
+      lines: guide.landmarks.map((l) => {
+        const half = (l.leg_front != null ? l.leg_front + 0.01 : (guideFace === "front" ? l.half_front : l.half_back)) + 0.03;
+        return { name: l.name, y: Y(l.y), x1: X(-half), x2: X(half) };
+      }),
+      points: guide.points.map((p) => ({ name: p.name, x: X(p.x), y: Y(p.y) })),
+    };
+  }, [guide, guideFace, guideCf, guideNudge, guidePiece, guideAnchor, preview]);
 
   const gridStep = useMemo(() => {
     const target = view.w / 10;
@@ -456,6 +577,31 @@ function Board({
           <line key={index} {...line} />
         ))}
       </g>
+      {layer ? (
+        <g className="form-guide" data-face={guideFace}>
+          {layer.arms.map((a) => (
+            <polygon key={a.name} points={a.points} className="guide-arm" />
+          ))}
+          <polygon points={layer.torso} className="guide-body" />
+          {layer.legs.map((l) => (
+            <polygon key={l.side} points={l.points} className="guide-body" />
+          ))}
+          <line x1={layer.centre.x} y1={layer.centre.y1} x2={layer.centre.x} y2={layer.centre.y2} className="guide-centre" />
+          {layer.lines.map((l) => (
+            <g key={l.name}>
+              <line x1={l.x1} y1={l.y} x2={l.x2} y2={l.y} className="guide-line" data-name={l.name} />
+              <text x={l.x1} y={l.y - view.w / 300} fontSize={view.w / 120} className="guide-label">
+                {l.name === "neck" ? "HPS / neck" : l.name[0].toUpperCase() + l.name.slice(1)}
+              </text>
+            </g>
+          ))}
+          {layer.points.map((p) => (
+            <circle key={p.name} cx={p.x} cy={p.y} r={view.w / 400} className="guide-point">
+              <title>{p.name.replace(/_/g, " ")}</title>
+            </circle>
+          ))}
+        </g>
+      ) : null}
       {preview.paths.map((path, index) => {
         const points = path.points.map(([x, y]) => `${x},${y}`).join(" ");
         const colour = panelColour.get(path.panel) ?? "#555";
