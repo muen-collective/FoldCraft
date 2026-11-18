@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 type Shared = Arc<Mutex<Client>>;
+static SIM: std::sync::Mutex<Option<crate::preview::Preview>> = std::sync::Mutex::new(None);
 type ApiResult = Result<Json<Value>, (StatusCode, Json<Value>)>;
 
 const MAX_TEMPLATE_BYTES: usize = 8 * 1024 * 1024;
@@ -28,12 +29,20 @@ pub fn router() -> std::io::Result<Router> {
         .route("/api/document", get(document))
         .route("/api/preview", get(preview))
         .route("/api/open", post(open))
+        .route("/api/upload", post(upload))
+        .route("/api/edges", get(edges))
         .route("/api/import/dxf/preview", post(import_preview))
         .route("/api/import/dxf/apply", post(import_apply))
         .route("/api/command", post(command))
         .route("/api/prepare", post(prepare))
         .route("/api/commit", post(commit))
         .route("/api/cancel", post(cancel))
+        .route("/api/export/svg", get(export_svg))
+        .route("/api/export/print-svg", get(export_print_svg))
+        .route("/api/export/dxf", get(export_dxf))
+        .route("/api/scene", get(scene))
+        .route("/api/sim/step", post(sim_step))
+        .route("/api/sim/reset", post(sim_reset))
         .route("/api/undo", post(undo))
         .route("/api/redo", post(redo))
         .with_state(state))
@@ -88,6 +97,47 @@ async fn document(State(state): State<Shared>) -> ApiResult {
 async fn preview(State(state): State<Shared>) -> ApiResult {
     let template = lock(&state)?.template().map_err(rejected)?;
     Ok(Json(preview_paths(&template).map_err(rejected)?))
+}
+
+/// The annotated pattern preview SVG of the resident document. Rest geometry
+/// only; never a simulated shape.
+async fn export_svg(State(state): State<Shared>) -> Result<String, (StatusCode, Json<Value>)> {
+    let template = lock(&state)?.template().map_err(rejected)?;
+    let parsed = parse_template(&template)?;
+    Ok(marvelous_cloth::garment::export::pattern_svg(&parsed))
+}
+
+/// The physical 1:1 millimetre sheet with stored allowances and notches when
+/// present. Untiled single sheet: not a certified cutting pattern.
+async fn export_print_svg(
+    State(state): State<Shared>,
+) -> Result<String, (StatusCode, Json<Value>)> {
+    let template = lock(&state)?.template().map_err(rejected)?;
+    let parsed = parse_template(&template)?;
+    marvelous_cloth::garment::export::print_pattern_svg(&parsed)
+        .map_err(|error| bad_request(format!("print svg failed: {error}")))
+}
+
+/// Plain flat DXF of the resident document: millimetres, one closed contour
+/// per panel with a PIECE NAME record, curved edges as bulged segments. No
+/// AAMA/ASTM grade or size records - that dialect is separate work.
+async fn export_dxf(State(state): State<Shared>) -> Result<String, (StatusCode, Json<Value>)> {
+    let template = lock(&state)?.template().map_err(rejected)?;
+    let parsed = parse_template(&template)?;
+    Ok(marvelous_cloth::garment::export::dxf::flat_dxf(&parsed))
+}
+
+/// Store an uploaded .dxf/.json under .uploads; return its absolute path.
+async fn upload(request: axum::extract::Request) -> ApiResult {
+    crate::upload::upload(request).await
+}
+
+/// Named boundaries sampled into board coordinates, for picking and the edge
+/// inspector. Read-only; rest geometry only, never draped positions.
+async fn edges(State(state): State<Shared>) -> ApiResult {
+    let template = lock(&state)?.template().map_err(rejected)?;
+    let list = crate::inspect::board_edges(&template).map_err(rejected)?;
+    Ok(Json(serde_json::json!({ "units": "metres", "edges": list })))
 }
 
 /// Preview a DXF without touching the resident document.
@@ -200,6 +250,60 @@ async fn cancel(State(state): State<Shared>, Json(body): Json<Value>) -> ApiResu
         .ok_or_else(|| bad_request("change token is required"))?;
     let snapshot = lock(&state)?.cancel(change).map_err(rejected)?;
     Ok(Json(summarize_document(&snapshot)))
+}
+
+// Rest-shape mesh of the resident template. Static geometry; no solver has
+/// run and nothing here claims a fit.
+async fn scene(State(state): State<Shared>) -> ApiResult {
+    let template = lock(&state)?.template().map_err(rejected)?;
+    let parsed = parse_template(&template)?;
+    let mesh = crate::preview::rest_mesh(&parsed).map_err(server_error)?;
+    Ok(Json(mesh))
+}
+
+async fn sim_step(State(state): State<Shared>, Json(body): Json<Value>) -> ApiResult {
+    let steps = body.get("steps").and_then(Value::as_u64).unwrap_or(1).clamp(1, 240) as usize;
+    let (template, revision) = {
+        let mut client = lock(&state)?;
+        let snapshot = client.snapshot().map_err(rejected)?;
+        (
+            snapshot.get("template").cloned().ok_or_else(|| bad_request("no document"))?,
+            snapshot.get("revision").and_then(Value::as_u64).unwrap_or(0),
+        )
+    };
+    let parsed = parse_template(&template)?;
+    let mut guard = SIM.lock().map_err(|e| bad_request(e.to_string()))?;
+    if guard.as_ref().is_some_and(|preview| preview.stale(revision)) || guard.is_none() {
+        *guard = Some(crate::preview::Preview::from_template(&parsed, revision).map_err(server_error)?);
+    }
+    let preview = guard.as_mut().expect("just built");
+    let (done, failure) = preview.step(steps);
+    let mut snapshot = preview.snapshot();
+    snapshot["stepsDone"] = json!(done);
+    if let Some(error) = failure {
+        snapshot["solverError"] = json!(error);
+    }
+    Ok(Json(snapshot))
+}
+
+async fn sim_reset(State(state): State<Shared>) -> ApiResult {
+    if let Ok(mut guard) = SIM.lock() {
+        *guard = None;
+    }
+    let _ = state;
+    Ok(Json(json!({"reset": true})))
+}
+
+fn parse_template(value: &Value) -> Result<crate::garment::GarmentTemplate, (StatusCode, Json<Value>)> {
+    serde_json::from_value(value.clone())
+        .map_err(|e| bad_request(format!("invalid template: {e}")))
+}
+
+fn server_error(error: String) -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({"error": {"code": "preview_failed", "detail": error}})),
+    )
 }
 
 async fn undo(State(state): State<Shared>) -> ApiResult {

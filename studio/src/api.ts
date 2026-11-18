@@ -71,6 +71,7 @@ export type ImportContour = {
   curvedEdges: number;
   eligible: boolean;
   reason: string | null;
+  bounds: { min: [number, number]; max: [number, number] } | null;
 };
 
 export type ImportPreview = {
@@ -80,6 +81,26 @@ export type ImportPreview = {
   contours: ImportContour[];
   leftOut: { entity: string; layer: string; reason: string }[];
   leftOutTotal: number;
+};
+
+export type BoardEdge = {
+  panel: string;
+  name: string;
+  points: [number, number][];
+  length_m: number;
+};
+
+export type EdgeList = { units: "metres"; edges: BoardEdge[] };
+
+export type DrapeSnapshot = {
+  solver: string;
+  claim: string;
+  time_s: number;
+  dt: number;
+  stepsDone?: number;
+  solverError?: string;
+  positions: [number, number, number][];
+  panels: { panel: string; triangles: [number, number, number][] }[];
 };
 
 export type CatalogEntry = {
@@ -121,6 +142,34 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ path, selected, fabric, metres_per_unit: metresPerUnit }),
     }),
+  edges: () => request<EdgeList>("/api/edges"),
+  command: (command: Record<string, unknown>) =>
+    request<DocumentSummary>("/api/command", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command }),
+    }),
+  uploadDxf: async (file: File): Promise<string> => {
+    // The engine reads bounded local files by path; the dev server stores the
+    // upload under .uploads and hands back an absolute path.
+    const form = new FormData();
+    form.append("file", file);
+    const response = await fetch("/api/upload", { method: "POST", body: form });
+    if (!response.ok) throw new Error("upload failed");
+    const body = (await response.json()) as { path: string };
+    return body.path;
+  },
+  simStep: (steps: number) =>
+    request<DrapeSnapshot>("/api/sim/step", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ steps }),
+    }),
+  download: async (kind: "svg" | "print-svg") => {
+    const response = await fetch("/api/export/" + kind);
+    if (!response.ok) throw new Error("export failed");
+    return response.text();
+  },
   undo: () => request<DocumentSummary>("/api/undo", { method: "POST" }),
   redo: () => request<DocumentSummary>("/api/redo", { method: "POST" }),
 };

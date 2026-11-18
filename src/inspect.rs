@@ -97,6 +97,59 @@ fn summarize_seam(seam: &Value) -> Value {
     })
 }
 
+/// One named boundary of a panel, sampled and placed on the shared board.
+/// Names are the stable sewing targets; lengths are rest lengths in metres.
+#[derive(serde::Serialize)]
+pub struct BoardEdge {
+    pub panel: String,
+    pub name: String,
+    pub points: Vec<[f64; 2]>,
+    pub length_m: f64,
+}
+
+fn polyline_length(points: &[DVec2]) -> f64 {
+    points.windows(2).map(|w| (w[1] - w[0]).length()).sum()
+}
+
+/// Sample every named boundary into board coordinates for hit-testing and the
+/// edge inspector. Curves flatten at the mesher's own tolerance so what the
+/// browser draws matches what the solver meshes.
+pub fn board_edges(template: &Value) -> Result<Vec<BoardEdge>, SessionError> {
+    let bytes = serde_json::to_vec(template)
+        .map_err(|error| SessionError::new("invalid_document", error.to_string()))?;
+    let parsed: crate::garment::GarmentTemplate = serde_json::from_slice(&bytes)
+        .map_err(|error| SessionError::new("invalid_document", error.to_string()))?;
+    let mut edges = vec![];
+    for (index, panel) in parsed.panels.iter().enumerate() {
+        let Some(polygon) = &panel.polygon else { continue };
+        let place = |p: DVec2| {
+            crate::authoring::layout(&parsed, index)
+                + crate::authoring::rotate_2d(p, panel.layout_rotation_degrees)
+        };
+        for (i, name) in polygon.edges.iter().enumerate() {
+            if let Ok(points) = polygon.edge_points(i) {
+                if points.len() < 2 {
+                    continue;
+                }
+                let length_m = polyline_length(&points);
+                edges.push(BoardEdge {
+                    panel: panel.id.clone(),
+                    name: name.clone(),
+                    points: points
+                        .iter()
+                        .map(|p| {
+                            let placed = place(*p);
+                            [placed.x, placed.y]
+                        })
+                        .collect(),
+                    length_m,
+                });
+            }
+        }
+    }
+    Ok(edges)
+}
+
 /// Board-space polylines for the 2D drafting view, in metres.
 pub fn preview_paths(template: &Value) -> Result<Value, SessionError> {
     let bytes = serde_json::to_vec(template)
