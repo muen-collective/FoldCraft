@@ -13,6 +13,7 @@
 //!
 //! CPU only: nothing here touches wgpu or the UI toolkit.
 use crate::avatar::SurfaceMesh;
+use crate::form_builder::GeneratorDecl;
 use crate::form_sizing::{Resized, Sizer, SizingDecl, Targets};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -53,6 +54,10 @@ pub struct AvatarEntry {
     pub dimensions_cm: BTreeMap<String, f64>,
     /// Landmarks and size chart, when the form can be resized.
     pub sizing: Option<SizingDecl>,
+    /// True when the mesh is built from a profile instead of read from a file.
+    pub generated: bool,
+    #[serde(skip)]
+    pub generator: Option<GeneratorDecl>,
     pub source: String,
     pub license: String,
 }
@@ -63,8 +68,11 @@ pub struct AvatarEntry {
 struct FormFile {
     id: String,
     title: String,
-    /// A file name inside the form's own directory.
-    mesh: String,
+    /// A file name inside the form's own directory. Give this or `generator`, not both.
+    #[serde(default)]
+    mesh: Option<String>,
+    #[serde(default)]
+    generator: Option<GeneratorDecl>,
     height_m: f64,
     shoulder_height_m: f64,
     #[serde(default)]
@@ -141,6 +149,8 @@ fn mannequin(root: &Path) -> AvatarEntry {
         shoulder_height_m: None,
         dimensions_cm: BTreeMap::new(),
         sizing: None,
+        generated: false,
+        generator: None,
         source:
             "MakeHuman community base mesh, extracted and normalised by scripts/prepare-avatar.py"
                 .to_owned(),
@@ -160,6 +170,8 @@ fn unavailable(id: String, title: String, reason: String) -> AvatarEntry {
         shoulder_height_m: None,
         dimensions_cm: BTreeMap::new(),
         sizing: None,
+        generated: false,
+        generator: None,
         source: String::new(),
         license: String::new(),
     }
@@ -186,10 +198,18 @@ fn read_form(dir: &Path) -> Result<AvatarEntry, String> {
             form.id
         ));
     }
-    if !valid_mesh_name(&form.mesh) {
-        return Err(
-            "form.json: mesh must be a bare .obj file name in the same directory".to_owned(),
-        );
+    match (&form.mesh, &form.generator) {
+        (Some(_), Some(_)) | (None, None) => {
+            return Err(
+                "form.json: give either mesh or generator, not both and not neither".to_owned(),
+            );
+        }
+        (Some(mesh), None) if !valid_mesh_name(mesh) => {
+            return Err(
+                "form.json: mesh must be a bare .obj file name in the same directory".to_owned(),
+            );
+        }
+        _ => {}
     }
     if !(form.height_m.is_finite() && form.height_m > 0.2 && form.height_m < 3.0) {
         return Err("form.json: height_m must be a length in metres between 0.2 and 3".to_owned());
@@ -205,19 +225,35 @@ fn read_form(dir: &Path) -> Result<AvatarEntry, String> {
     if let Some(sizing) = &form.sizing {
         sizing.validate(form.height_m)?;
     }
-    let mesh = dir.join(&form.mesh);
-    let present = mesh.is_file();
+    if let Some(generator) = &form.generator {
+        generator
+            .validate()
+            .map_err(|e| format!("form.json: {e}"))?;
+        let built = generator.height_m();
+        if (built - form.height_m).abs() > HEIGHT_TOLERANCE * form.height_m {
+            return Err(format!(
+                "form.json: height_m is {:.3} but the generator builds a form {built:.3} m tall",
+                form.height_m
+            ));
+        }
+    }
+    let mesh_name = form.mesh.clone().unwrap_or_default();
+    let mesh = dir.join(&mesh_name);
+    let generated = form.generator.is_some();
+    let present = generated || mesh.is_file();
     Ok(AvatarEntry {
         id: form.id,
         title: form.title,
         kind: AvatarKind::DressForm,
         available: present,
-        reason: (!present).then(|| format!("{} is not installed in {dir_name}/", form.mesh)),
+        reason: (!present).then(|| format!("{mesh_name} is not installed in {dir_name}/")),
         mesh,
         height_m: Some(form.height_m),
         shoulder_height_m: Some(form.shoulder_height_m),
         dimensions_cm: form.dimensions_cm,
         sizing: form.sizing,
+        generated,
+        generator: form.generator,
         source: form.source,
         license: form.license,
     })
@@ -259,19 +295,42 @@ impl AvatarEntry {
                 .clone()
                 .unwrap_or_else(|| "avatar is not available".to_owned()));
         }
-        let surface = SurfaceMesh::load_obj(&self.mesh)?;
+        let mut surface = match &self.generator {
+            Some(generator) => generator.build()?,
+            None => SurfaceMesh::load_obj(&self.mesh)?,
+        };
         if let Some(declared) = self.height_m.filter(|_| self.kind == AvatarKind::DressForm) {
             check_height(&surface, declared)?;
         }
+        let mut shoulder = self.shoulder_height_m;
+        let mut sizing = self.sizing.clone();
+        // A generated form is built to a row of its size chart, so what it measures at first is that row.
+        if let (Some(generator), Some(decl)) = (&self.generator, &sizing) {
+            if let Some(row) = generator.default_chart_row {
+                let chart = decl
+                    .chart
+                    .get(row)
+                    .ok_or("default_chart_row is not a row of the chart")?;
+                let sizer = Sizer::new(Arc::new(surface.clone()), decl)?;
+                let resized = sizer.resize(&Targets::from_flat(&chart.cm)?)?;
+                shoulder = shoulder.map(|y| resized.map_y(y));
+                let mut moved = decl.clone();
+                for knot in &mut moved.knots {
+                    knot.y_m = resized.knot_y[&knot.name];
+                }
+                surface = resized.surface;
+                sizing = Some(moved);
+            }
+        }
         let surface = Arc::new(surface);
-        let sizer = match &self.sizing {
+        let sizer = match &sizing {
             Some(decl) => Some(Sizer::new(Arc::clone(&surface), decl)?),
             None => None,
         };
         Ok(LoadedAvatar {
             id: self.id.clone(),
             surface,
-            shoulder_height_m: self.shoulder_height_m,
+            shoulder_height_m: shoulder,
             sizer,
         })
     }

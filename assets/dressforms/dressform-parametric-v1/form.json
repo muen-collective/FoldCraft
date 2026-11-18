@@ -1,0 +1,176 @@
+{
+  "id": "dressform-parametric-v1",
+  "title": "Dress form (parametric, US 8 / UK 12)",
+  "height_m": 1.5326,
+  "shoulder_height_m": 1.3598,
+  "dimensions_cm": {
+    "bust": 91.4,
+    "waist": 66.6,
+    "hip": 93.1,
+    "neck": 32.2
+  },
+  "source": "Built by form_builder from the profile below. The profile rows were read from the founder's scan (cross-section half-width, reach to front and back, and a roundness fitted from the section area) and are the only thing taken from it: no scan vertex is in this form. The stand is assumed.",
+  "license": "The profile is a table of measurements; the form is generated, not copied. Confirm the scan's origin before redistributing.",
+  "provenance": "Built to the US 8 / UK 12 row of the size chart, which the founder read from the DrapeXD dress-form screen. DrapeXD's other sizes were not available.",
+  "generator": {
+    "profile": [
+      {
+        "y_m": 0.0,
+        "half_width_m": 0.1606,
+        "front_m": 0.0863,
+        "back_m": -0.0969,
+        "exponent": 2.76
+      },
+      {
+        "y_m": 0.05,
+        "half_width_m": 0.1635,
+        "front_m": 0.0907,
+        "back_m": -0.1046,
+        "exponent": 2.77
+      },
+      {
+        "y_m": 0.1264,
+        "half_width_m": 0.1662,
+        "front_m": 0.0951,
+        "back_m": -0.1326,
+        "exponent": 2.64
+      },
+      {
+        "y_m": 0.24,
+        "half_width_m": 0.1496,
+        "front_m": 0.1052,
+        "back_m": -0.1098,
+        "exponent": 2.26
+      },
+      {
+        "y_m": 0.3361,
+        "half_width_m": 0.1142,
+        "front_m": 0.0908,
+        "back_m": -0.0908,
+        "exponent": 2.35
+      },
+      {
+        "y_m": 0.4,
+        "half_width_m": 0.1229,
+        "front_m": 0.0926,
+        "back_m": -0.0975,
+        "exponent": 2.47
+      },
+      {
+        "y_m": 0.4694,
+        "half_width_m": 0.1388,
+        "front_m": 0.0964,
+        "back_m": -0.1069,
+        "exponent": 2.84
+      },
+      {
+        "y_m": 0.5394,
+        "half_width_m": 0.1591,
+        "front_m": 0.1083,
+        "back_m": -0.1154,
+        "exponent": 2.88
+      },
+      {
+        "y_m": 0.6,
+        "half_width_m": 0.1773,
+        "front_m": 0.0637,
+        "back_m": -0.1171,
+        "exponent": 2.51
+      },
+      {
+        "y_m": 0.6398,
+        "half_width_m": 0.1811,
+        "front_m": 0.0425,
+        "back_m": -0.1137,
+        "exponent": 2.33
+      },
+      {
+        "y_m": 0.68,
+        "half_width_m": 0.1761,
+        "front_m": 0.0244,
+        "back_m": -0.1043,
+        "exponent": 1.7
+      },
+      {
+        "y_m": 0.72,
+        "half_width_m": 0.0736,
+        "front_m": 0.0365,
+        "back_m": -0.0855,
+        "exponent": 1.6
+      },
+      {
+        "y_m": 0.7555,
+        "half_width_m": 0.0497,
+        "front_m": 0.0466,
+        "back_m": -0.0606,
+        "exponent": 2.02
+      },
+      {
+        "y_m": 0.78,
+        "half_width_m": 0.0487,
+        "front_m": 0.0528,
+        "back_m": -0.0478,
+        "exponent": 1.86
+      },
+      {
+        "y_m": 0.8126,
+        "half_width_m": 0.0361,
+        "front_m": 0.02,
+        "back_m": -0.0329,
+        "exponent": 1.91
+      }
+    ],
+    "stand": {
+      "hem_height_m": 0.72,
+      "pole_radius_m": 0.012,
+      "base_radius_m": 0.14,
+      "base_height_m": 0.02
+    },
+    "default_chart_row": 0,
+    "basis": "Profile read from the scan dressform-scan-v01 at 15 heights (superellipse exponent fitted from the convex-hull area of a 12 mm slab, clamped 1.6-5; front/back measured from the waist section's mid-depth). Stand dimensions are ASSUMED: hem 72 cm, pole 2.4 cm across, base 28 cm across, 2 cm high."
+  },
+  "sizing": {
+    "knots": [
+      {
+        "name": "hip",
+        "y_m": 0.8464,
+        "basis": "widest girth below the waist, found on the scan by prepare_dressform.py (height of the profile row, plus the stand)"
+      },
+      {
+        "name": "waist",
+        "y_m": 1.0561,
+        "basis": "narrowest girth between hip and bust, found on the scan (height of the profile row, plus the stand)"
+      },
+      {
+        "name": "underbust",
+        "y_m": 1.1894,
+        "basis": "ASSUMED: 7 cm below the bust line. The scan has no distinct under-bust feature (height of the profile row, plus the stand)"
+      },
+      {
+        "name": "bust",
+        "y_m": 1.2594,
+        "basis": "widest girth above the waist, found on the scan (height of the profile row, plus the stand)"
+      },
+      {
+        "name": "neck",
+        "y_m": 1.4755,
+        "basis": "95.5 percent of the full scan height, where the neck is taken for back waist length; a tapered neck has no single girth (height of the profile row, plus the stand)"
+      }
+    ],
+    "chart": [
+      {
+        "label": "US 8 / UK 12 (bust 35.43 in)",
+        "cm": {
+          "bust": 89.99,
+          "underbust": 75.01,
+          "waist": 67.49,
+          "hip": 92.99,
+          "neck": 34.01,
+          "back_waist_length": 42.01,
+          "waist_to_hip": 20.5
+        }
+      }
+    ],
+    "fixed_below_m": 0.718
+  }
+}

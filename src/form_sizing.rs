@@ -51,6 +51,9 @@ pub struct SizingDecl {
     pub knots: Vec<KnotDecl>,
     #[serde(default)]
     pub chart: Vec<SizeChartRow>,
+    /// Vertices below this height are not scaled or moved: the stand of a generated form.
+    #[serde(default)]
+    pub fixed_below_m: Option<f64>,
 }
 
 impl SizingDecl {
@@ -83,6 +86,14 @@ impl SizingDecl {
             return Err(format!(
                 "sizing: landmarks must be ordered hip, waist, underbust, bust, neck (got {order:?})"
             ));
+        }
+        if let (Some(fixed), Some(hip)) = (self.fixed_below_m, self.knots.first()) {
+            if !(fixed.is_finite() && fixed >= 0.0 && fixed < hip.y_m) {
+                return Err(
+                    "sizing: fixed_below_m must be at least 0 and below the hip landmark"
+                        .to_owned(),
+                );
+            }
         }
         for row in &self.chart {
             for key in row.cm.keys() {
@@ -156,6 +167,7 @@ pub struct Sizer {
     surface: Arc<SurfaceMesh>,
     knots: Vec<Knot>,
     centre: [f64; 2],
+    fixed_below: f64,
     pub base: Measured,
     pub chart: Vec<SizeChartRow>,
     pub basis: BTreeMap<String, String>,
@@ -289,6 +301,7 @@ impl Sizer {
             surface,
             knots,
             centre,
+            fixed_below: decl.fixed_below_m.unwrap_or(f64::NEG_INFINITY),
             base: Measured::default(),
             chart: decl.chart.clone(),
             basis: decl
@@ -410,6 +423,9 @@ impl Sizer {
             .vertices
             .iter()
             .map(|v| {
+                if v.y < self.fixed_below {
+                    return *v;
+                }
                 let s = scale_at(v.y);
                 glam::DVec3::new(cx + (v.x - cx) * s, map_y(&remap, v.y), cz + (v.z - cz) * s)
             })
