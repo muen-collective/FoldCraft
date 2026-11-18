@@ -517,6 +517,19 @@ impl Session {
     }
 }
 
+fn bounds_of(points: &[glam::DVec2]) -> Value {
+    let mut min = glam::DVec2::splat(f64::INFINITY);
+    let mut max = glam::DVec2::splat(f64::NEG_INFINITY);
+    for point in points {
+        min = min.min(*point);
+        max = max.max(*point);
+    }
+    if !min.is_finite() || !max.is_finite() {
+        return Value::Null;
+    }
+    json!({"min": [min.x, min.y], "max": [max.x, max.y]})
+}
+
 /// A reviewable contour report for one DXF file. Nothing here mutates state.
 fn import_preview(drawing: &crate::garment::dxf_import::Drawing) -> Value {
     let contours: Vec<Value> = drawing
@@ -535,6 +548,9 @@ fn import_preview(drawing: &crate::garment::dxf_import::Drawing) -> Value {
                 "curvedEdges": path.curves.len(),
                 "eligible": issue.is_none(),
                 "reason": issue,
+                // Bounding box in metres so the studio can ghost an outline
+                // before anything is applied. Full coordinates stay server-side.
+                "bounds": bounds_of(&path.points),
             })
         })
         .collect();

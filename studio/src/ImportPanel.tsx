@@ -1,16 +1,17 @@
 
 import { useState } from "react";
-import { api, type ImportPreview } from "./api";
+import { api, type ImportContour, type ImportPreview } from "./api";
 
 type Props = {
   fabricId: string | null;
   onApplied: () => void;
   onError: (message: string) => void;
+  onPreview?: (contours: ImportContour[]) => void;
 };
 
 /** Review a DXF before it touches the document: contours, names, node counts
  *  with and without fitting, eligibility reasons and the left-out ledger. */
-export function ImportPanel({ fabricId, onApplied, onError }: Props) {
+export function ImportPanel({ fabricId, onApplied, onError, onPreview }: Props) {
   const [path, setPath] = useState("");
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -22,6 +23,7 @@ export function ImportPanel({ fabricId, onApplied, onError }: Props) {
     try {
       const result = await api.importPreview(path.trim(), 0.001);
       setPreview(result);
+      onPreview?.(result.contours);
       setSelected(new Set(result.contours.filter((c) => c.eligible).map((c) => c.index)));
     } catch (problem) {
       onError(problem instanceof Error ? problem.message : String(problem));
@@ -66,6 +68,23 @@ export function ImportPanel({ fabricId, onApplied, onError }: Props) {
           onChange={(event) => setPath(event.target.value)}
           onKeyDown={(event) => event.key === "Enter" && inspect()}
         />
+        <label className="import-pick" title="Choose a local DXF">
+          Browse…
+          <input
+            type="file"
+            accept=".dxf"
+            onChange={async (event) => {
+              const file = event.target.files?.[0];
+              if (!file) return;
+              try {
+                const uploaded = await api.uploadDxf(file);
+                setPath(uploaded);
+              } catch (problem) {
+                onError(problem instanceof Error ? problem.message : String(problem));
+              }
+            }}
+          />
+        </label>
         <button type="button" onClick={inspect} disabled={busy || !path.trim()}>
           Preview
         </button>

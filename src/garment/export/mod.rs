@@ -1,4 +1,5 @@
 //! Deterministic interchange artifacts; all generated on CPU.
+pub mod dxf;
 use super::embedding::MaterialPath;
 use super::{CompiledGarment, GarmentTemplate, seam::Side};
 use crate::model::State;

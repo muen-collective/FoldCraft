@@ -6,3 +6,6 @@ __pycache__/
 
 # Local agent mailbox and queue writer lock
 /comms/
+
+# local API uploads (studio file picker)
+.uploads/

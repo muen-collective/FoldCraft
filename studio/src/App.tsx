@@ -1,24 +1,110 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type CatalogEntry, type DocumentSummary, type Panel, type Preview } from "./api";
+import {
+  api,
+  type BoardEdge,
+  type CatalogEntry,
+  type ImportContour,
+  type DocumentSummary,
+  type Panel,
+  type DrapeSnapshot,
+  type Preview,
+} from "./api";
+import { DrapeView } from "./DrapeView";
 import { ImportPanel } from "./ImportPanel";
 
 const PANEL_COLOURS = ["#c8452b", "#2f6f6a", "#8a6b2f", "#4a5b8c", "#7a4a6a", "#3f6b3f"];
 
-type Selection = { panel: string | null };
+type Selection = { panel: string | null; edge: BoardEdge | null };
 
 export default function App() {
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
   const [summary, setSummary] = useState<DocumentSummary | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
-  const [selection, setSelection] = useState<Selection>({ panel: null });
+  const [selection, setSelection] = useState<Selection>({ panel: null, edge: null });
+ const [edges, setEdges] = useState<BoardEdge[]>([]);
+  const [ghosts, setGhosts] = useState<ImportContour[]>([]);
+  const [drape, setDrape] = useState<DrapeSnapshot | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const playRef = useRef(false);
+  const stepBusy = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const [document, drawing] = await Promise.all([api.document(), api.preview()]);
+    const [document, drawing, boundaryList] = await Promise.all([
+      api.document(),
+      api.preview(),
+      api.edges(),
+    ]);
     setSummary(document);
     setPreview(drawing);
+    setEdges(boundaryList.edges);
+    // Any document change invalidates a draped preview; the engine rebuilds on
+    // the next step.
+    setDrape(null);
   }, []);
+
+  useEffect(() => {
+    playRef.current = playing;
+  }, [playing]);
+
+  useEffect(() => {
+    if (!playing) return;
+    let cancelled = false;
+    const tick = async () => {
+      while (!cancelled && playRef.current) {
+        if (!stepBusy.current) {
+          stepBusy.current = true;
+          try {
+            const snapshot = await api.simStep(8);
+            if (!cancelled) setDrape(snapshot);
+          } catch {
+            if (!cancelled) setPlaying(false);
+          } finally {
+            stepBusy.current = false;
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 33));
+      }
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+    };
+  }, [playing]);
+
+  const stepOnce = useCallback(async () => {
+    setPlaying(false);
+    try {
+      setDrape(await api.simStep(24));
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : String(problem));
+    }
+  }, []);
+
+  // The garment variable shadows the DOM global inside this component, so the
+  // browser object is reached through globalThis here.
+  const downloadSvg = useCallback(
+    async (kind: "svg" | "print-svg") => {
+      try {
+        const text = await api.download(kind);
+        const dom = globalThis.document;
+        const url = URL.createObjectURL(new Blob([text], { type: "image/svg+xml" }));
+        const link = dom.createElement("a");
+        link.href = url;
+        link.download =
+          (summary?.document?.name ?? "garment") +
+          "-" +
+          (kind === "svg" ? "preview" : "print") +
+          ".svg";
+        link.click();
+        URL.revokeObjectURL(url);
+      } catch (problem) {
+        setError(problem instanceof Error ? problem.message : String(problem));
+      }
+    },
+    [summary],
+  );
 
   const open = useCallback(
     async (id: string) => {
@@ -26,8 +112,9 @@ export default function App() {
       setError(null);
       try {
         await api.open(id);
+        setGhosts([]);
         await refresh();
-        setSelection({ panel: null });
+        setSelection({ panel: null, edge: null });
       } catch (problem) {
         setError(problem instanceof Error ? problem.message : String(problem));
       } finally {
@@ -116,6 +203,25 @@ export default function App() {
           <button type="button" disabled={busy || !summary?.canRedo} onClick={() => history("redo")}>
             Redo
           </button>
+          <button type="button" disabled={busy || !document} onClick={() => downloadSvg("svg")}>
+            SVG
+          </button>
+          <button
+            type="button"
+            disabled={busy || !document}
+            title="1:1 millimetre sheet with a 100 mm ruler; untiled, not cutting-certified"
+            onClick={() => downloadSvg("print-svg")}
+          >
+            Print 1:1
+          </button>
+        </div>
+
+        <div className="transport drape-transport" title="CPU preview, not a fit">
+          <button type="button" onClick={() => setPlaying((value) => !value)}>
+            {playing ? "Pause" : "Play"}
+          </button>
+          <button type="button" onClick={stepOnce}>Step</button>
+          <span className="drape-label">{drape ? "preview · not a fit" : "no drape"}</span>
         </div>
 
         <div className="revision" title="Document revision. Every change bumps it.">
@@ -142,28 +248,52 @@ export default function App() {
           ))}
         </nav>
 
-        <main className="board">
+        <main className="board" data-split={drape ? "true" : undefined}>
           {preview ? (
-            <Board
+           <Board
               preview={preview}
+              ghosts={ghosts.filter((c) => c.closed && c.eligible && c.bounds)}
+              edges={edges}
               selection={selection}
               panelColour={panelColour}
-              onSelect={(panel) => setSelection({ panel })}
+              onSelect={(panel) => setSelection({ panel, edge: null })}
+              onPickEdge={(edge) => setSelection({ panel: edge.panel, edge })}
             />
           ) : (
             <div className="board-empty">
               {busy ? "Opening…" : "Open a garment to start."}
             </div>
           )}
+          {drape ? (
+            <div className="drape-pane">
+              <DrapeView snapshot={drape} />
+              <span className="drape-caption">
+                {drape.solver} · t {drape.time_s.toFixed(2)} s ·{" "}
+                <strong>preview, not a fit</strong>
+              </span>
+            </div>
+          ) : null}
         </main>
 
         <aside className="inspector" aria-label="Inspector">
+          <ImportPanelHost
+            document={document}
+            onApplied={() => {
+              setGhosts([]);
+              refresh();
+            }}
+            onError={setError}
+            onPreview={setGhosts}
+          />
           <Inspector
             document={document}
+            edges={edges}
             selection={selection}
-            onSelect={(panel) => setSelection({ panel })}
+            onSelect={(panel) => setSelection({ panel, edge: null })}
             onChanged={refresh}
             onError={setError}
+            busy={busy}
+            onBusy={setBusy}
           />
         </aside>
       </div>
@@ -185,14 +315,20 @@ export default function App() {
 
 function Board({
   preview,
+  ghosts,
+  edges,
   selection,
   panelColour,
   onSelect,
+  onPickEdge,
 }: {
   preview: Preview;
+  ghosts: ImportContour[];
+  edges: BoardEdge[];
   selection: Selection;
   panelColour: Map<string, string>;
   onSelect: (panel: string) => void;
+  onPickEdge: (edge: BoardEdge) => void;
 }) {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -285,6 +421,39 @@ function Board({
             style={{ "--piece": colour } as React.CSSProperties}
           />
         );
+     })}
+      {ghosts.map((contour) => {
+        const [[minX, minY], [maxX, maxY]] = [contour.bounds!.min, contour.bounds!.max];
+        return (
+          <rect
+            key={`ghost-${contour.index}`}
+            x={minX}
+            y={minY}
+            width={Math.max(maxX - minX, 0.001)}
+            height={Math.max(maxY - minY, 0.001)}
+            className="ghost"
+          >
+            <title>{`${contour.piece ?? "contour"} — preview only`}</title>
+          </rect>
+        );
+      })}
+      {edges.map((edge) => {
+        const points = edge.points.map(([x, y]) => `${x},${y}`).join(" ");
+        const active = selection.edge?.panel === edge.panel && selection.edge?.name === edge.name;
+        return (
+          <polyline
+            key={`${edge.panel}/${edge.name}`}
+            points={points}
+            className="edge-hit"
+            data-active={active}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              onPickEdge(edge);
+            }}
+          >
+            <title>{`${edge.panel} · ${edge.name} · ${(edge.length_m * 100).toFixed(1)} cm`}</title>
+          </polyline>
+        );
       })}
     </svg>
   );
@@ -294,27 +463,42 @@ function ImportPanelHost({
   document,
   onApplied,
   onError,
+  onPreview,
 }: {
   document: DocumentSummary["document"];
   onApplied: () => void;
   onError: (message: string) => void;
+  onPreview: (contours: ImportContour[]) => void;
 }) {
   const fabricId = document?.fabrics[0]?.id ?? null;
-  return <ImportPanel fabricId={fabricId} onApplied={onApplied} onError={onError} />;
+  return (
+    <ImportPanel
+      fabricId={fabricId}
+      onApplied={onApplied}
+      onError={onError}
+      onPreview={onPreview}
+    />
+  );
 }
 
 function Inspector({
   document,
+  edges,
   selection,
   onSelect,
   onChanged,
   onError,
+  busy,
+  onBusy,
 }: {
   document: DocumentSummary["document"];
+  edges: BoardEdge[];
   selection: Selection;
   onSelect: (panel: string) => void;
   onChanged: () => void;
   onError: (message: string) => void;
+  busy: boolean;
+  onBusy: (value: boolean) => void;
 }) {
   if (!document) {
     return <div className="inspector-empty">Nothing open yet.</div>;
@@ -322,7 +506,6 @@ function Inspector({
   const selectedPanel = document.panels.find((panel) => panel.id === selection.panel);
   return (
     <>
-      <ImportPanelHost document={document} onApplied={onChanged} onError={onError} />
 
       <section className="group">
         <h2>
@@ -347,7 +530,19 @@ function Inspector({
         </ul>
       </section>
 
-      {selectedPanel ? <PieceDetail panel={selectedPanel} /> : null}
+      {selection.edge ? <EdgeCard edge={selection.edge} /> : null}
+      {selectedPanel ? (
+        <>
+          <PieceDetail panel={selectedPanel} />
+          <MovePanel
+            panel={selectedPanel}
+            busy={busy}
+            onBusy={onBusy}
+            onChanged={onChanged}
+            onError={onError}
+          />
+        </>
+      ) : null}
 
       <section className="group">
         <h2>
@@ -387,6 +582,105 @@ function PieceDetail({ panel }: { panel: Panel }) {
           </ul>
         </dd>
       </dl>
+    </section>
+  );
+}
+
+function EdgeCard({ edge }: { edge: BoardEdge }) {
+  return (
+    <section className="group detail">
+      <h2>Boundary</h2>
+      <dl>
+        <dt>Piece</dt>
+        <dd>{edge.panel}</dd>
+        <dt>Name</dt>
+        <dd>{edge.name}</dd>
+        <dt>Rest length</dt>
+        <dd>{(edge.length_m * 100).toFixed(2)} cm</dd>
+      </dl>
+    </section>
+  );
+}
+
+function MovePanel({
+  panel,
+  busy,
+  onBusy,
+  onChanged,
+  onError,
+}: {
+  panel: Panel;
+  busy: boolean;
+  onBusy: (value: boolean) => void;
+  onChanged: () => void;
+  onError: (message: string) => void;
+}) {
+  const [dx, setDx] = useState("0");
+  const [dy, setDy] = useState("0");
+  const [rotation, setRotation] = useState("0");
+
+  async function send(kind: "layout" | "board_transform") {
+    const x = Number.parseFloat(dx);
+    const y = Number.parseFloat(dy);
+    const degrees = Number.parseFloat(rotation);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(degrees)) {
+      onError("move values must be numbers (metres and degrees)");
+      return;
+    }
+    onBusy(true);
+    try {
+      if (kind === "layout") {
+        await api.command({ kind: "layout", panel: panel.id, origin: [x, y] });
+      } else {
+        await api.command({
+          kind: "board_transform",
+          panel: panel.id,
+          origin: [x, y],
+          rotation_degrees: degrees,
+        });
+      }
+      await onChanged();
+    } catch (problem) {
+      onError(problem instanceof Error ? problem.message : String(problem));
+    } finally {
+      onBusy(false);
+    }
+  }
+
+  const current = panel.layout_2d ?? [0, 0];
+  return (
+    <section className="group">
+      <h2>Move piece</h2>
+      <div className="field-row">
+        <label>
+          u (m)
+          <input value={dx} onChange={(event) => setDx(event.target.value)} inputMode="decimal" />
+        </label>
+        <label>
+          v (m)
+          <input value={dy} onChange={(event) => setDy(event.target.value)} inputMode="decimal" />
+        </label>
+        <label>
+          rot (°)
+          <input
+            value={rotation}
+            onChange={(event) => setRotation(event.target.value)}
+            inputMode="decimal"
+          />
+        </label>
+      </div>
+      <div className="field-row">
+        <button type="button" disabled={busy} onClick={() => send("layout")}>
+          Set position
+        </button>
+        <button type="button" disabled={busy} onClick={() => send("board_transform")}>
+          Apply transform
+        </button>
+      </div>
+      <p className="hint">
+        board now ({current[0].toFixed(2)}, {current[1].toFixed(2)}) m · presentation only, rest
+        geometry unchanged
+      </p>
     </section>
   );
 }

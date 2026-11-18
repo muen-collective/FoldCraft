@@ -861,25 +861,35 @@ pub fn read_ascii(text: &str, options: Options) -> Result<Drawing, String> {
         total: 0,
     };
     let model = parse_entity_list(entities)?;
-    // Model-space record lines are metadata for the whole drawing, never
-    // contours and never unsupported-entity issues.
+    // Walk model entities in document order. AAMA record lines are metadata:
+    // a PIECE NAME labels every outline until the next record, SAMPLE SIZE and
+    // UNITS describe the drawing. None of them becomes a contour or an issue.
     let mut model_sample_size = blocks.sample_size.clone();
     let mut model_unit_record = blocks.unit_record.clone();
-    let model = model
-        .into_iter()
-        .filter(|raw| {
-            if let Some(value) = record_value_of(raw, SAMPLE_RECORD) {
-                model_sample_size.get_or_insert(value);
-                return false;
-            }
-            if let Some(value) = record_value_of(raw, UNITS_RECORD) {
-                model_unit_record.get_or_insert(value);
-                return false;
-            }
-            !record_value_of(raw, PIECE_RECORD).is_some()
-        })
-        .collect::<Vec<_>>();
-    expansion.insert(&model, &Xform::identity(), "0", None, 0);
+    let mut current_piece: Option<String> = None;
+    for raw in &model {
+        if let Some(value) = record_value_of(raw, SAMPLE_RECORD) {
+            model_sample_size.get_or_insert(value);
+            continue;
+        }
+        if let Some(value) = record_value_of(raw, UNITS_RECORD) {
+            model_unit_record.get_or_insert(value);
+            continue;
+        }
+        if let Some(value) = record_value_of(raw, PIECE_RECORD) {
+            current_piece = Some(value);
+            continue;
+        }
+        // insert() saves and restores the ambient piece around recursion, so
+        // the running name must arrive as an argument, not as prior state.
+        expansion.insert(
+            std::slice::from_ref(raw),
+            &Xform::identity(),
+            "0",
+            current_piece.as_deref(),
+            0,
+        );
+    }
     if expansion.total > MAX_POINTS {
         return Err("Drawing point budget exceeded".into());
     }

@@ -40,12 +40,14 @@ pub mod model;
 pub mod motion;
 pub mod ogc;
 pub mod pattern_import;
+pub mod preview;
 pub mod picking;
 pub mod project;
 /// Shared optional renderer; the numerical modules do not depend on this module.
 #[cfg(feature = "desktop")]
 pub mod render;
 pub mod session_client;
+pub mod upload;
 pub mod skills;
 pub mod session_protocol;
 pub mod solver;
