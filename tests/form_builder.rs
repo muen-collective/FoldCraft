@@ -140,3 +140,47 @@ fn the_same_profile_builds_the_same_mesh() {
     assert_eq!(a.triangles, b.triangles);
     assert!(a.vertices.iter().zip(&b.vertices).all(|(p, q)| p == q));
 }
+
+#[test]
+fn a_tilted_top_row_is_cut_square_to_a_leaning_neck_and_stays_closed() {
+    let level = decl().build().unwrap();
+    let top = |m: &marvelous_cloth::avatar::SurfaceMesh| {
+        m.vertices.iter().map(|v| v.y).fold(f64::MIN, f64::max)
+    };
+    let mut d = decl();
+    d.profile.last_mut().unwrap().tilt = -0.14; // front lower than back, as a neck leaning forward 8 degrees
+    let tilted = d.build().unwrap();
+    // Level: every top vertex is at one height. Tilted: the back of the cut is higher than the front by tilt x depth.
+    let top_y = top(&level);
+    assert_eq!(
+        level
+            .vertices
+            .iter()
+            .filter(|v| (v.y - top_y).abs() < 1e-12)
+            .count(),
+        65
+    );
+    let row_top: Vec<_> = tilted
+        .vertices
+        .iter()
+        .filter(|v| v.y > top_y - 0.02 && v.y < top_y + 0.02)
+        .collect();
+    let (front, back) = (
+        row_top.iter().max_by(|a, b| a.z.total_cmp(&b.z)).unwrap(),
+        row_top.iter().min_by(|a, b| a.z.total_cmp(&b.z)).unwrap(),
+    );
+    let depth = front.z - back.z; // 0.06 m
+    assert!(
+        ((back.y - front.y) - 0.14 * depth).abs() < 1e-9,
+        "back {} front {}",
+        back.y,
+        front.y
+    );
+    // Still closed and outward after tilting.
+    assert!(signed_volume(&tilted) > 0.0);
+    tilted.validate().unwrap();
+    // A tilt that would fold the surface is refused.
+    let mut d = decl();
+    d.profile[3].tilt = 0.9;
+    assert!(d.build().err().unwrap().contains("tilt"));
+}

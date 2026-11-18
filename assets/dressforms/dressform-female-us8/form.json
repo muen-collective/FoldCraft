@@ -199,79 +199,82 @@
       {
         "y_m": 0.705,
         "half_width_m": 0.1073,
-        "front_m": 0.0295,
-        "back_m": -0.0914,
+        "front_m": 0.0289,
+        "back_m": -0.0916,
         "exponent": 1.62578125
       },
       {
         "y_m": 0.71,
         "half_width_m": 0.0854,
-        "front_m": 0.0326,
-        "back_m": -0.0871,
+        "front_m": 0.0303,
+        "back_m": -0.0878,
         "exponent": 1.69375
       },
       {
         "y_m": 0.715,
         "half_width_m": 0.0672,
-        "front_m": 0.0358,
-        "back_m": -0.0826,
+        "front_m": 0.0316,
+        "back_m": -0.0843,
         "exponent": 1.7898437500000002
       },
       {
         "y_m": 0.72,
         "half_width_m": 0.056,
-        "front_m": 0.0386,
-        "back_m": -0.0782,
+        "front_m": 0.0323,
+        "back_m": -0.0813,
         "exponent": 2.0300000000000002
       },
       {
         "y_m": 0.725,
         "half_width_m": 0.0521,
-        "front_m": 0.0407,
-        "back_m": -0.0743,
+        "front_m": 0.0327,
+        "back_m": -0.0791,
         "exponent": 2.149375
       },
       {
         "y_m": 0.73,
         "half_width_m": 0.0512,
-        "front_m": 0.042,
-        "back_m": -0.0713,
+        "front_m": 0.0327,
+        "back_m": -0.0779,
         "exponent": 2.1671875000000003
       },
       {
         "y_m": 0.735,
         "half_width_m": 0.0508,
-        "front_m": 0.0425,
-        "back_m": -0.0696,
+        "front_m": 0.0327,
+        "back_m": -0.0778,
         "exponent": 2.1883984375
       },
       {
         "y_m": 0.74,
         "half_width_m": 0.0505,
-        "front_m": 0.0425,
-        "back_m": -0.068,
+        "front_m": 0.0331,
+        "back_m": -0.0775,
         "exponent": 2.2
       },
       {
         "y_m": 0.76,
         "half_width_m": 0.0493,
-        "front_m": 0.0422,
-        "back_m": -0.0621,
-        "exponent": 2.2
+        "front_m": 0.0359,
+        "back_m": -0.0747,
+        "exponent": 2.2,
+        "tilt": 0.0
       },
       {
         "y_m": 0.78,
         "half_width_m": 0.0482,
-        "front_m": 0.0419,
-        "back_m": -0.0561,
-        "exponent": 2.2
+        "front_m": 0.0387,
+        "back_m": -0.0718,
+        "exponent": 2.2,
+        "tilt": 0.0
       },
       {
         "y_m": 0.8,
         "half_width_m": 0.047,
         "front_m": 0.0415,
-        "back_m": -0.0502,
-        "exponent": 2.2
+        "back_m": -0.069,
+        "exponent": 2.2,
+        "tilt": -0.1405
       }
     ],
     "sides": 96,
@@ -282,7 +285,7 @@
       "base_height_m": 0.02
     },
     "default_chart_row": 0,
-    "basis": "measured: half-width, front and back reach, and roundness at each row, from exact plane sections of the scan, 1 cm apart through the shoulder (0.68-0.73 m); rows below 0.66 m smoothed [1,2,1]. measured: neck taper and lean (linear fits of half-width, front and back reach to the scan at 0.74-0.78 m). assumed: the cone continues up to a flat cut at 0.80 m with a forward lean of 8 degrees (the scan's own lean, 19 degrees, looked wrong against the reference photographs), and the shoulder rows blend into it by smoothstep over 0.70-0.74 m (the scan's slanted top is an artefact). assumed: the stand (hem 72 cm, pole 2.4 cm across, base 28 cm across)."
+    "basis": "measured: half-width, front and back reach, and roundness at each row, from exact plane sections of the scan, 1 cm apart through the shoulder (0.68-0.73 m); rows below 0.66 m smoothed [1,2,1]. measured: neck taper and lean (linear fits of half-width, front and back reach to the scan at 0.74-0.78 m). assumed: the cone continues up to a flat cut at 0.80 m with a forward lean of 8 degrees (the scan's own lean, 19 degrees, looked wrong against the reference photographs), the front line anchored to the chest at 0.70 m, and the top cut square to the neck's axis (a tilt of -0.1405, front lower, as the real forms' neck tops are angled, not level), and the shoulder rows blend into it by smoothstep over 0.70-0.74 m (the scan's slanted top is an artefact). assumed: the stand (hem 72 cm, pole 2.4 cm across, base 28 cm across)."
   },
   "sizing": {
     "knots": [

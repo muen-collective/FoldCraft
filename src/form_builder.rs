@@ -32,6 +32,10 @@ pub struct ProfileRow {
     pub back_m: f64,
     /// 2 is an ellipse; larger is boxier.
     pub exponent: f64,
+    /// Slope of this row's plane, rise per metre of depth (dy/dz): 0 is level, negative lowers the front. A neck
+    /// that leans forward is cut square to its axis, so its top row takes the negative of the lean's tangent.
+    #[serde(default)]
+    pub tilt: f64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -97,6 +101,11 @@ impl GeneratorDecl {
                     "generator: row {i} needs half_width_m of at least 1 cm, front_m above 0 and back_m below 0"
                 ));
             }
+            if !row.tilt.is_finite() || row.tilt.abs() > 0.5 {
+                return Err(format!(
+                    "generator: row {i} tilt must be between -0.5 and 0.5"
+                ));
+            }
             if !(1.5..=6.0).contains(&row.exponent) {
                 return Err(format!(
                     "generator: row {i} exponent {} is outside 1.5-6",
@@ -144,11 +153,9 @@ impl GeneratorDecl {
                     let (c, s) = (t.cos(), t.sin());
                     let p = 2.0 / row.exponent;
                     let z = if s >= 0.0 { row.front_m } else { row.back_m } * s.abs().powf(p);
-                    DVec3::new(
-                        row.half_width_m * c.signum() * c.abs().powf(p),
-                        hem + row.y_m,
-                        z,
-                    )
+                    // The plane of the row may be tilted about the middle of its depth.
+                    let y = hem + row.y_m + row.tilt * (z - (row.front_m + row.back_m) / 2.0);
+                    DVec3::new(row.half_width_m * c.signum() * c.abs().powf(p), y, z)
                 })
                 .collect()
         };

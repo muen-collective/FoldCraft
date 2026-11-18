@@ -147,13 +147,18 @@ fn us8_is_built_to_its_chart_row_within_a_millimetre() {
     let a = load_us8();
     let m = &a.sizer.as_ref().unwrap().base.girth_cm;
     // The Shop Company's women's US 8: bust 35.5, waist 26.5, hips 36.5, neck 13.5 in. It publishes no underbust.
-    for (key, want) in [("bust", 90.17), ("waist", 67.31), ("hip", 92.71), ("neck", 34.29)] {
+    for (key, want) in [
+        ("bust", 90.17),
+        ("waist", 67.31),
+        ("hip", 92.71),
+        ("neck", 34.29),
+    ] {
         assert!((m[key] - want).abs() < 0.1, "{key}: {} vs {want}", m[key]);
     }
 }
 
 #[test]
-fn us8_keeps_a_dense_shoulder_and_a_cylindrical_neck_cut_flat() {
+fn us8_keeps_a_dense_shoulder_and_a_tapering_neck() {
     let entries = avatar_catalog::discover(&assets_root());
     let g = entries
         .iter()
@@ -177,7 +182,7 @@ fn us8_keeps_a_dense_shoulder_and_a_cylindrical_neck_cut_flat() {
             w[1].y_m
         );
     }
-    // No row anywhere is more than 5 cm from its neighbour above the hip.
+    // No row anywhere is more than 5 cm from its neighbour: no banding.
     for w in g.profile.windows(2) {
         assert!(
             w[1].y_m - w[0].y_m <= 0.0501,
@@ -186,13 +191,56 @@ fn us8_keeps_a_dense_shoulder_and_a_cylindrical_neck_cut_flat() {
             w[1].y_m
         );
     }
-    // The neck is a cylinder: constant half-width, and it is cut flat, not tapered to a point.
-    let neck: Vec<_> = g.profile.iter().filter(|r| r.y_m >= 0.7555).collect();
-    assert!(neck.len() >= 3);
+    // The neck is a cone: it narrows going up, by less than a third.
+    let neck: Vec<_> = g.profile.iter().filter(|r| r.y_m >= 0.74).collect();
+    assert!(neck.len() >= 4);
     assert!(
-        neck.iter()
-            .all(|r| (r.half_width_m - neck[0].half_width_m).abs() < 1e-9)
+        neck.windows(2)
+            .all(|w| w[1].half_width_m <= w[0].half_width_m + 1e-9),
+        "the neck never widens going up"
     );
+    assert!(neck.last().unwrap().half_width_m > 0.8 * neck[0].half_width_m);
+}
+
+#[test]
+fn us8_front_of_neck_rises_out_of_the_chest_without_a_step() {
+    let entries = avatar_catalog::discover(&assets_root());
+    let g = entries
+        .iter()
+        .find(|e| e.id == US8)
+        .unwrap()
+        .generator
+        .as_ref()
+        .unwrap();
+    let front = |y: f64| {
+        g.profile
+            .iter()
+            .find(|r| (r.y_m - y).abs() < 1e-9)
+            .unwrap()
+            .front_m
+    };
+    // On the earlier neck the front stood 1.9 cm further forward at 0.72 m than at 0.68 m: an overhang at the neck base.
+    // Now the front line moves by under 1 cm from the chest's low point to the neck base, and never steps.
+    assert!(
+        front(0.72) - front(0.68) < 0.01,
+        "front steps forward: {} -> {}",
+        front(0.68),
+        front(0.72)
+    );
+    let neck: Vec<_> = g.profile.iter().filter(|r| r.y_m >= 0.70).collect();
+    for w in neck.windows(2) {
+        assert!(
+            w[1].front_m - w[0].front_m < 0.006,
+            "front jumps {} -> {} at {}",
+            w[0].front_m,
+            w[1].front_m,
+            w[1].y_m
+        );
+    }
+}
+
+#[test]
+fn us8_neck_top_is_one_plane_cut_square_to_the_leaning_neck() {
     let a = load_us8();
     let top = a
         .surface
@@ -200,15 +248,36 @@ fn us8_keeps_a_dense_shoulder_and_a_cylindrical_neck_cut_flat() {
         .iter()
         .map(|v| v.y)
         .fold(f64::MIN, f64::max);
-    let at_top = a
+    // The vertices of the top ring and its cap centre (the ring is within 2 cm of the top; the stand is far below).
+    let ring: Vec<_> = a
         .surface
         .vertices
         .iter()
-        .filter(|v| (v.y - top).abs() < 1e-9)
+        .filter(|v| v.y > top - 0.02)
+        .collect();
+    assert!(ring.len() > 90, "{} top vertices", ring.len());
+    let (front, back) = (
+        ring.iter().max_by(|p, q| p.z.total_cmp(&q.z)).unwrap(),
+        ring.iter().min_by(|p, q| p.z.total_cmp(&q.z)).unwrap(),
+    );
+    let slope = (back.y - front.y) / (front.z - back.z);
+    assert!(
+        (slope - 8f64.to_radians().tan()).abs() < 0.01,
+        "top slope {slope}, expected tan 8 degrees"
+    );
+    assert!(
+        front.y < back.y,
+        "the front of the cut is lower than the back"
+    );
+    // One plane: every top-ring vertex lies on the line through front and back (the plane is y = y0 - slope z).
+    let y0 = back.y + slope * back.z;
+    let on_plane = ring
+        .iter()
+        .filter(|v| (v.y - (y0 - slope * v.z)).abs() < 1e-9)
         .count();
     assert!(
-        at_top > 90,
-        "the neck is capped flat: {at_top} vertices share the top height"
+        on_plane > 90,
+        "only {on_plane} top vertices lie on the cut plane"
     );
 }
 
