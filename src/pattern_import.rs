@@ -149,7 +149,10 @@ pub fn prepare(
         + 0.15;
     let mut selected_id = None;
     for path in contours {
-        let mut points = path.points[..path.points.len() - 1].to_vec();
+        // Fitted nodes replace dense samples when the fit passed its tolerance;
+        // otherwise the original contour is used unchanged.
+        let source = path.fitted_points.as_deref().unwrap_or(&path.points);
+        let mut points = source[..source.len() - 1].to_vec();
         let lo = points
             .iter()
             .copied()
@@ -181,7 +184,11 @@ pub fn prepare(
             points,
             subdivisions: 0,
             meshing: Some(meshing.clone()),
-            curves: BTreeMap::new(),
+            curves: path
+                .curves
+                .iter()
+                .map(|(index, controls)| (format!("edge_{}", index + 1), *controls))
+                .collect(),
             holes: vec![],
             lines: vec![],
             target_lengths: BTreeMap::new(),

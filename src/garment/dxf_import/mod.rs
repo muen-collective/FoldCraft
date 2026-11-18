@@ -32,12 +32,18 @@ pub struct Options {
     /// Explicit user scale overrides header units and is recorded in the result.
     pub metres_per_unit: Option<f64>,
     pub chord_error_m: f64,
+    /// Collapse dense samples toward this many nodes per contour (0 disables fitting).
+    pub node_budget: usize,
+    /// Fidelity limit for a fitted contour against its source samples, metres.
+    pub fit_tolerance_m: f64,
 }
 impl Default for Options {
     fn default() -> Self {
         Self {
             metres_per_unit: None,
             chord_error_m: 0.0001,
+            node_budget: fit::DEFAULT_NODE_BUDGET,
+            fit_tolerance_m: 0.0005,
         }
     }
 }
@@ -52,6 +58,13 @@ pub struct Path {
     /// Metres, with a repeated first point only for closed paths.
     pub points: Vec<DVec2>,
     pub closed: bool,
+    /// Cubic control points per simplified edge, when fitting ran. Keyed by
+    /// the index of the edge start within `fitted_points`; absent means straight.
+    pub curves: Vec<(usize, [DVec2; 2])>,
+    /// Simplified node positions actually used for panels, when fitting ran.
+    pub fitted_points: Option<Vec<DVec2>>,
+    /// Sample count before fitting, for the report.
+    pub source_nodes: usize,
 }
 
 #[derive(Debug)]
@@ -500,6 +513,8 @@ struct Expansion<'a> {
     piece: Option<String>,
     scale: f64,
     error: f64,
+    node_budget: usize,
+    fit_tolerance_m: f64,
     paths: Vec<Path>,
     issues: Vec<Issue>,
     total: usize,
@@ -518,15 +533,81 @@ impl Expansion<'_> {
     ) {
         match geometry(kind, fields, vertices, self.scale, self.error / xform.scale.abs()) {
             Ok((points, closed)) => {
-                self.total += points.len();
-                self.paths.push(Path {
+                let mut path = Path {
                     entity: kind.into(),
                     handle,
                     layer: layer.to_owned(),
                     piece: self.piece.clone(),
                     points: points.into_iter().map(|p| xform.apply(p)).collect(),
                     closed,
-                });
+                    curves: vec![],
+                    fitted_points: None,
+                    source_nodes: 0,
+                };
+                path.source_nodes = path.points.len();
+                if self.node_budget > 0 && path.closed && path.points.len() > 8 {
+                    // The budget is a goal, never a licence to distort: nodes
+                    // are dropped only while every kept edge stays within the
+                    // fidelity limit of the source samples. A corner-heavy
+                    // contour may keep more nodes than the budget asks for.
+                    let mut best: Option<(Vec<DVec2>, Vec<(usize, [DVec2; 2])>)> = None;
+                    for step in 0..8u32 {
+                        let tolerance = self.fit_tolerance_m * (1u32 << step) as f64;
+                        let simplified = fit::simplify(&path.points, tolerance);
+                        if simplified.len() < 4 {
+                            break;
+                        }
+                        let edges = fit::fit_edges(&simplified, true);
+                        let mut curves = Vec::new();
+                        let mut faithful = true;
+                        for (i, e) in edges.iter().enumerate() {
+                            // Measure the edge against its own span of source
+                            // samples only. The full ring contains distant
+                            // geometry that every straight edge would "miss".
+                            let start_index = simplified
+                                .iter()
+                                .position(|p| *p == e.start)
+                                .unwrap_or(i);
+                            let end_index = if i + 1 >= simplified.len() {
+                                path.points.len() - 1
+                            } else {
+                                let end_point = simplified[i + 1];
+                                path.points[start_index..]
+                                    .iter()
+                                    .position(|p| *p == end_point)
+                                    .map(|k| start_index + k)
+                                    .unwrap_or(start_index + 1)
+                            };
+                            let span = &path.points[start_index.min(end_index)..=end_index.max(start_index)];
+                            let dev = fit::max_deviation(span, std::slice::from_ref(e), 16);
+                            if dev > self.fit_tolerance_m {
+                                faithful = false;
+                                break;
+                            }
+                            if e.c1 != e.start || e.c2 != e.end {
+                                curves.push((i, [e.c1, e.c2]));
+                            }
+                        }
+                        if !faithful {
+                            continue;
+                        }
+                        let count = simplified.len();
+                        let candidate = (simplified, curves);
+                        match &best {
+                            Some((previous, _)) if previous.len() <= count => {}
+                            _ => best = Some(candidate),
+                        }
+                        if count <= self.node_budget {
+                            break;
+                        }
+                    }
+                    if let Some((simplified, curves)) = best {
+                        path.fitted_points = Some(simplified);
+                        path.curves = curves;
+                    }
+                }
+                self.total += path.points.len();
+                self.paths.push(path);
             }
             Err(reason) => self.issues.push(Issue {
                 entity: kind.into(),
@@ -773,6 +854,8 @@ pub fn read_ascii(text: &str, options: Options) -> Result<Drawing, String> {
         piece: None,
         scale,
         error: options.chord_error_m,
+        node_budget: options.node_budget,
+        fit_tolerance_m: options.fit_tolerance_m,
         paths: vec![],
         issues: vec![],
         total: 0,
