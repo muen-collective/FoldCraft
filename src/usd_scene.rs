@@ -372,6 +372,50 @@ pub fn update_panel_viewport_mesh(
     Ok(())
 }
 
+/// Replace the display mesh of the body (`/Collider`) in a live scene, e.g. when another dress form is picked.
+pub fn update_collider_mesh(
+    scene: &cssimpler::renderer::gpu::usd::UsdScene,
+    surface: &crate::avatar::SurfaceMesh,
+) -> Result<(), String> {
+    use cssimpler::renderer::gpu::openusd::gf;
+    if surface
+        .vertices
+        .iter()
+        .any(|p| p.to_array().into_iter().any(|v| !finite_float(v)))
+    {
+        return Err("USD body positions must be finite f32 values".into());
+    }
+    let points: Vec<_> = surface
+        .vertices
+        .iter()
+        .map(|p| gf::vec3f(p.x as f32, p.y as f32, p.z as f32))
+        .collect();
+    let counts = vec![3_i32; surface.triangles.len()];
+    let indices: Vec<i32> = surface
+        .triangles
+        .iter()
+        .flat_map(|t| t.iter().map(|&v| v as i32))
+        .collect();
+    let stage = scene.stage();
+    // Topology first: a shorter point list must not be read with the old, longer index list.
+    stage
+        .attribute("/Collider.faceVertexCounts")
+        .map_err(|e| e.to_string())?
+        .set(counts)
+        .map_err(|e| e.to_string())?;
+    stage
+        .attribute("/Collider.faceVertexIndices")
+        .map_err(|e| e.to_string())?
+        .set(indices)
+        .map_err(|e| e.to_string())?;
+    stage
+        .attribute("/Collider.points")
+        .map_err(|e| e.to_string())?
+        .set(points)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Add a static collision surface to a display stage without changing physics.
 pub fn append_viewport_surface(mut usda: String, surface: &crate::avatar::SurfaceMesh) -> String {
     // Put the display-only mesh alongside World so garment panel identity is unchanged.

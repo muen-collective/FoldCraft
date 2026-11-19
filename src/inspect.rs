@@ -121,7 +121,9 @@ pub fn board_edges(template: &Value) -> Result<Vec<BoardEdge>, SessionError> {
         .map_err(|error| SessionError::new("invalid_document", error.to_string()))?;
     let mut edges = vec![];
     for (index, panel) in parsed.panels.iter().enumerate() {
-        let Some(polygon) = &panel.polygon else { continue };
+        let Some(polygon) = &panel.polygon else {
+            continue;
+        };
         let place = |p: DVec2| {
             crate::authoring::layout(&parsed, index)
                 + crate::authoring::rotate_2d(p, panel.layout_rotation_degrees)
@@ -160,7 +162,11 @@ pub fn preview_paths(template: &Value) -> Result<Value, SessionError> {
     let mut min = DVec2::splat(f64::INFINITY);
     let mut max = DVec2::splat(f64::NEG_INFINITY);
     for path in &selection.preview {
-        let points: Vec<[f64; 2]> = path.points_m.iter().map(|point| [point.x, point.y]).collect();
+        let points: Vec<[f64; 2]> = path
+            .points_m
+            .iter()
+            .map(|point| [point.x, point.y])
+            .collect();
         for point in &path.points_m {
             min = min.min(*point);
             max = max.max(*point);

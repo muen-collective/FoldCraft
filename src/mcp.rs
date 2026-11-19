@@ -63,7 +63,9 @@ impl Server {
     }
 
     fn edit(&mut self, command: Value) -> ToolResult {
-        Ok(summarize_document(&self.client.edit(command).map_err(tool_failure)?))
+        Ok(summarize_document(
+            &self.client.edit(command).map_err(tool_failure)?,
+        ))
     }
 
     fn execute(&mut self, name: &str, args: &Value) -> ToolResult {
@@ -82,7 +84,11 @@ impl Server {
             "document_open" => self.open(args),
             "document_state" => {
                 let data = self.snapshot()?;
-                if args.get("summary_only").and_then(Value::as_bool).unwrap_or(false) {
+                if args
+                    .get("summary_only")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
                     Ok(summarize_document(&data))
                 } else {
                     Ok(data)
@@ -103,10 +109,9 @@ impl Server {
             "document_import_apply" => {
                 let path = require_string(args, "path")?;
                 let fabric = require_string(args, "fabric")?;
-                let selected = args
-                    .get("selected")
-                    .cloned()
-                    .ok_or_else(|| ToolError::new("invalid_arguments", "selected [index] is required"))?;
+                let selected = args.get("selected").cloned().ok_or_else(|| {
+                    ToolError::new("invalid_arguments", "selected [index] is required")
+                })?;
                 let guard = self.client.guard();
                 let mut payload = json!({
                     "op": "import_apply",
@@ -233,7 +238,10 @@ impl Server {
                             })?
                     }
                 };
-                let all_panels = args.get("all_panels").and_then(Value::as_bool).unwrap_or(false);
+                let all_panels = args
+                    .get("all_panels")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 self.edit(json!({
                     "kind": "fabric",
                     "panel": panel,
@@ -271,7 +279,8 @@ impl Server {
                     ToolError::new("invalid_arguments", "command object is required")
                 })?;
                 let guard = self.client.guard();
-                let data = self.call(json!({"op": "prepare_edit", "guard": guard, "command": command}))?;
+                let data =
+                    self.call(json!({"op": "prepare_edit", "guard": guard, "command": command}))?;
                 Ok(json!({
                     "change": data.get("change"),
                     "documentSession": data.get("documentSession"),
@@ -309,7 +318,10 @@ impl Server {
                     "body": skill.body,
                 }))
             }
-            other => Err(ToolError::new("unknown_tool", format!("No tool named {other}"))),
+            other => Err(ToolError::new(
+                "unknown_tool",
+                format!("No tool named {other}"),
+            )),
         }
     }
 
@@ -407,7 +419,7 @@ impl Server {
                 return Err(ToolError::new(
                     "unknown_resource",
                     format!("No resource at {other}"),
-                ))
+                ));
             }
         };
         Ok(json!({"contents": [{"uri": uri, "mimeType": "application/json", "text": text}]}))
@@ -425,7 +437,7 @@ impl Server {
                         "error": {"code": -32700, "message": format!("Parse error: {error}")},
                     })
                     .to_string(),
-                )
+                );
             }
         };
         self.handle_message(&message)
@@ -439,7 +451,9 @@ impl Server {
             "initialize" => Ok(self.initialize(&params)),
             "ping" => Ok(json!({})),
             "tools/list" => Ok(json!({"tools": tool_definitions()})),
-            "tools/call" => self.tools_call(&params).map_err(|error| (-32602, error.detail)),
+            "tools/call" => self
+                .tools_call(&params)
+                .map_err(|error| (-32602, error.detail)),
             "resources/list" => Ok(json!({"resources": resource_definitions()})),
             "resources/read" => self
                 .resources_read(&params)

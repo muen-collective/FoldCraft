@@ -258,6 +258,8 @@ pub enum RunnerUiOp {
     Redo2d,
     SelectPiece(usize),
     LoadPreset(GarmentKind),
+    /// Put a dress form (by catalog id) in the 3D view.
+    SelectDressForm(String),
     StatusNote(String),
 }
 
@@ -326,6 +328,11 @@ pub struct CssRunnerState {
     pub accordion_open: [bool; 6],
     pub board_2d_pan: (f64, f64),
     pub board_2d_zoom: f64,
+    /// Bodies the picker offers, read once from the assets folder.
+    pub dress_forms: Vec<marvelous_cloth::avatar_catalog::AvatarEntry>,
+    pub selected_avatar_id: String,
+    /// How far the garment has been raised to sit on the selected body's shoulder line.
+    pub avatar_lift_m: f64,
 }
 
 impl CssRunnerState {
@@ -404,6 +411,11 @@ impl CssRunnerState {
             accordion_open: [true, false, true, false, false, false],
             board_2d_pan: (0.0, 0.0),
             board_2d_zoom: 1.0,
+            dress_forms: marvelous_cloth::avatar_catalog::discover(
+                &marvelous_cloth::avatar_catalog::assets_root(),
+            ),
+            selected_avatar_id: marvelous_cloth::avatar_catalog::MANNEQUIN_ID.to_owned(),
+            avatar_lift_m: 0.0,
         }
     }
 
@@ -1090,10 +1102,127 @@ fn apply_runner_ui_op(state: &mut CssRunnerState, op: RunnerUiOp) {
                 }
             }
         }
+        RunnerUiOp::SelectDressForm(id) => select_dress_form(state, &id),
         RunnerUiOp::StatusNote(msg) => {
             state.status_message = msg;
         }
     }
+}
+
+/// A title that fits the narrow picker: the part before any parenthesis, without the common prefix.
+fn short_form_title(title: &str) -> String {
+    let head = title.split(" (").next().unwrap_or(title);
+    let head = head.strip_prefix("Full-body dress form, ").unwrap_or(head);
+    head.chars().take(22).collect()
+}
+
+/// Put the dress form `id` in the 3D view: its mesh becomes the collider and the displayed body, and the
+/// garment is moved onto its shoulder line. The cloth is reset, so what follows is a fresh drape, not a fit.
+fn select_dress_form(state: &mut CssRunnerState, id: &str) {
+    let Some(entry) = state.dress_forms.iter().find(|e| e.id == id).cloned() else {
+        state.status_message = format!("Unknown dress form: {id}");
+        return;
+    };
+    match entry.load() {
+        Ok(avatar) => swap_avatar(state, &avatar),
+        Err(err) => state.status_message = format!("{}: {err}", entry.title),
+    }
+}
+
+fn swap_avatar(state: &mut CssRunnerState, avatar: &marvelous_cloth::avatar_catalog::LoadedAvatar) {
+    use marvelous_cloth::avatar_catalog::garment_lift;
+    let collider = match marvelous_cloth::avatar::MeshCollider::with_clearance(
+        Arc::clone(&avatar.surface),
+        state.project.contact_stiffness,
+        state.project.contact_clearance,
+    ) {
+        Ok(c) => Arc::new(c),
+        Err(err) => {
+            state.status_message = format!("Cannot use {}: {err}", avatar.id);
+            return;
+        }
+    };
+    // Undo the lift of the previous body, then lift onto the new one, so swaps do not accumulate.
+    let mut next_template = state.project.template.clone();
+    let top_now = match next_template.compile() {
+        Ok(c) => c
+            .arrangement_positions
+            .iter()
+            .map(|p| p.y)
+            .fold(f64::NEG_INFINITY, f64::max),
+        Err(err) => {
+            state.status_message = format!("Garment compile error: {err}");
+            return;
+        }
+    };
+    let new_lift = garment_lift(top_now - state.avatar_lift_m, avatar.shoulder_height_m);
+    let delta = new_lift - state.avatar_lift_m;
+    for panel in &mut next_template.panels {
+        panel.placement.translation.y += delta;
+    }
+    let compiled = match next_template.compile() {
+        Ok(c) => Arc::new(c),
+        Err(err) => {
+            state.status_message = format!("Garment compile error: {err}");
+            return;
+        }
+    };
+    let old = state.project.template.clone();
+    state.history.record(old);
+    state.preview_template = None;
+    state.drag_2d = None;
+    state.draft_2d = None;
+    state.hovered_2d = None;
+    let next_state = compiled.initial_state.clone();
+    state.project.template = next_template;
+    state.project.state = None;
+    state.project.mesh_signature = None;
+    state.generation = state.generation.wrapping_add(1);
+    state.worker_pending = false;
+    state.playing = false;
+    state.step_count = 0;
+    let (quasistatic, next_dt) = (state.scene.quasistatic, state.scene.next_dt);
+    state.scene = FittingScene {
+        garment: Arc::clone(&compiled),
+        collider: Arc::clone(&collider),
+        state: next_state.clone(),
+        quasistatic,
+        next_dt,
+    };
+    state.initial_scene = FittingScene {
+        garment: compiled,
+        collider,
+        state: next_state,
+        quasistatic,
+        next_dt,
+    };
+    state.avatar_lift_m = new_lift;
+    state.selected_avatar_id = avatar.id.clone();
+    state.camera = marvelous_cloth::usd_scene::default_scene_camera(
+        &state.scene.state.x,
+        Some(&state.scene.collider.surface),
+    );
+    let mut usd_note = String::new();
+    if let Some(ref usd) = state.usd_scene {
+        if let Err(err) =
+            marvelous_cloth::usd_scene::update_collider_mesh(usd, &state.scene.collider.surface)
+        {
+            usd_note = format!(" (3D body not updated: {err})");
+        }
+        if let Err(err) = marvelous_cloth::usd_scene::update_panel_viewport_mesh(
+            usd,
+            &state.scene.garment,
+            &state.scene.state,
+        ) {
+            usd_note.push_str(&format!(" (garment not updated: {err})"));
+        }
+    }
+    state.sync_usd_camera();
+    state.send_control_state(false);
+    state.status_message = format!(
+        "Dress form: {} · garment placed on its shoulder line (a preview, not a fit){usd_note}",
+        avatar.id
+    );
 }
 
 /// Responsive row count and bar height `(rows, height_px)` for `#cad-2d-bar` given `#viewport-2d` width.
@@ -4173,6 +4302,34 @@ fn build_runner_left_browser(state: &CssRunnerState) -> Node {
         });
     }
 
+    let mut form_cards = Vec::new();
+    for entry in &state.dress_forms {
+        let class = if entry.id == state.selected_avatar_id {
+            "form-row active"
+        } else {
+            "form-row"
+        };
+        let meta = if entry.available {
+            entry
+                .height_m
+                .map_or(String::new(), |h| format!("{:.0} cm", h * 100.0))
+        } else {
+            "not installed".to_owned()
+        };
+        let op = if entry.available {
+            RunnerUiOp::SelectDressForm(entry.id.clone())
+        } else {
+            RunnerUiOp::StatusNote(format!("{} is not installed on this machine", entry.title))
+        };
+        let title = short_form_title(&entry.title);
+        form_cards.push(ui! {
+            <div class={class} onclick_shared={queue_ui_op(&state.pending_ui_ops, op)}>
+                <span class="form-row-name">{title}</span>
+                <span class="form-row-meta">{meta}</span>
+            </div>
+        });
+    }
+
     ui! {
         <aside id="left-browser" class="sidebar left-browser-panel">
             <header class="browser-header">
@@ -4212,6 +4369,16 @@ fn build_runner_left_browser(state: &CssRunnerState) -> Node {
 
                 <div class="browser-section">
                     <div class="section-header">
+                        <span class="section-title">"Dress Forms"</span>
+                        <span class="section-subtitle">"Pick the body in the 3D view"</span>
+                    </div>
+                    <div class="form-list">
+                        {form_cards}
+                    </div>
+                </div>
+
+                <div class="browser-section">
+                    <div class="section-header">
                         <span class="section-title">"Import & Export"</span>
                     </div>
                     <div class="quick-action-group">
@@ -4219,7 +4386,7 @@ fn build_runner_left_browser(state: &CssRunnerState) -> Node {
                         <div class="quick-actions-row">
                             <button class="btn-action" onclick_shared={queue_ui_op(&state.pending_ui_ops, RunnerUiOp::StatusNote("Use CLI --project or File menu to import DXF".into()))}>"DXF"</button>
                             <button class="btn-action" onclick_shared={queue_ui_op(&state.pending_ui_ops, RunnerUiOp::StatusNote("Use CLI or File menu to import SVG".into()))}>"SVG"</button>
-                            <button class="btn-action" onclick_shared={queue_ui_op(&state.pending_ui_ops, RunnerUiOp::StatusNote("Use CLI --avatar to swap mannequin OBJ".into()))}>"Avatar"</button>
+                            <button class="btn-action" onclick_shared={queue_ui_op(&state.pending_ui_ops, RunnerUiOp::StatusNote("Pick a body under Dress Forms, or use CLI --avatar for another OBJ".into()))}>"Avatar"</button>
                         </div>
                     </div>
                     <div class="quick-action-group">
@@ -8593,5 +8760,70 @@ mod tests {
                 tip_node.layout
             );
         }
+    }
+
+    #[test]
+    fn test_dress_form_swap_lifts_garment_once_and_restores_on_return() {
+        use marvelous_cloth::avatar::SurfaceMesh;
+        use marvelous_cloth::avatar_catalog::LoadedAvatar;
+        let _guard = worker::WORKER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let avatar = dir.path().join("avatar.obj");
+        std::fs::write(&avatar, "v 0 0 -10\nv 1 0 -10\nv 0 1 -10\nf 1 2 3\n").unwrap();
+        let big = dir.path().join("big.obj");
+        std::fs::write(
+            &big,
+            "v 0 0 -10\nv 2 0 -10\nv 0 2 -10\nv 2 2 -10\nf 1 2 3\nf 2 4 3\n",
+        )
+        .unwrap();
+        let project = FittingProject::basic(GarmentKind::Tshirt, 0, avatar);
+        let scene = project.compile().expect("compile scene");
+        let files = DocumentFiles {
+            output: dir.path().join("out_swap"),
+            source: None,
+            modified: false,
+        };
+        let (tx, latest) = worker::start_cpu().expect("start cpu worker");
+        let mut state = CssRunnerState::new(project, scene, files, tx, latest);
+        let top = |s: &CssRunnerState| {
+            s.project
+                .template
+                .compile()
+                .unwrap()
+                .arrangement_positions
+                .iter()
+                .map(|p| p.y)
+                .fold(f64::NEG_INFINITY, f64::max)
+        };
+        let top0 = top(&state);
+        let form = |id: &str, shoulder: Option<f64>| LoadedAvatar {
+            id: id.to_owned(),
+            surface: Arc::new(SurfaceMesh::load_obj(&big).unwrap()),
+            shoulder_height_m: shoulder,
+            sizer: None,
+            landmarks: Default::default(),
+            torso_from_m: 0.0,
+            parts: Default::default(),
+            preset_lines: Vec::new(),
+        };
+        swap_avatar(&mut state, &form("form-a", Some(1.25)));
+        assert!((top(&state) - 1.25).abs() < 1e-9, "garment top on shoulder");
+        assert_eq!(state.selected_avatar_id, "form-a");
+        assert_eq!(state.scene.collider.surface.triangles.len(), 2);
+        // A second form must not stack its lift on the first.
+        swap_avatar(&mut state, &form("form-b", Some(1.10)));
+        assert!(
+            (top(&state) - 1.10).abs() < 1e-9,
+            "lift does not accumulate"
+        );
+        // A body with no shoulder line (the mannequin) puts the garment back where the template had it.
+        swap_avatar(&mut state, &form("makehuman-mannequin", None));
+        assert!(
+            (top(&state) - top0).abs() < 1e-9,
+            "back to the template height"
+        );
+        assert!(state.status_message.contains("preview, not a fit"));
     }
 }

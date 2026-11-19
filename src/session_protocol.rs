@@ -558,9 +558,7 @@ fn import_preview(drawing: &crate::garment::dxf_import::Drawing) -> Value {
         .issues
         .iter()
         .take(200)
-        .map(|issue| {
-            json!({"entity": issue.entity, "layer": issue.layer, "reason": issue.reason})
-        })
+        .map(|issue| json!({"entity": issue.entity, "layer": issue.layer, "reason": issue.reason}))
         .collect();
     json!({
         "units": {"insunits": drawing.insunits, "metresPerUnit": drawing.metres_per_unit, "overridden": drawing.scale_overridden},

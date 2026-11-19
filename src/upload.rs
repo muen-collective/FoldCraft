@@ -9,7 +9,9 @@ const MAX_UPLOAD_BYTES: usize = 16 * 1024 * 1024;
 const DOUBLE_QUOTE: char = '"';
 const SLASHES: [char; 2] = ['/', '\\'];
 
-pub async fn upload(request: axum::extract::Request) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+pub async fn upload(
+    request: axum::extract::Request,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let deny = |detail: String| {
         (
             StatusCode::BAD_REQUEST,
@@ -39,9 +41,13 @@ pub async fn upload(request: axum::extract::Request) -> Result<Json<Value>, (Sta
         let header_end = find_subsequence(part, b"\r\n\r\n")
             .map(|at| at + 4)
             .or_else(|| find_subsequence(part, b"\n\n").map(|at| at + 2));
-        let Some(header_end) = header_end else { continue };
+        let Some(header_end) = header_end else {
+            continue;
+        };
         let headers = String::from_utf8_lossy(&part[..header_end]).to_string();
-        let Some(name_at) = headers.find("filename=") else { continue };
+        let Some(name_at) = headers.find("filename=") else {
+            continue;
+        };
         let after = &headers[name_at + "filename=".len()..];
         let after = after.trim_start_matches('=');
         let quoted = after.starts_with(DOUBLE_QUOTE);
@@ -54,7 +60,9 @@ pub async fn upload(request: axum::extract::Request) -> Result<Json<Value>, (Sta
         let base = candidate.rsplit(SLASHES).next().unwrap_or(candidate);
         let extension = base.rsplit('.').next().unwrap_or("").to_lowercase();
         if !matches!(extension.as_str(), "dxf" | "json") {
-            return Err(deny(format!("rejected suffix .{extension}: only .dxf and .json")));
+            return Err(deny(format!(
+                "rejected suffix .{extension}: only .dxf and .json"
+            )));
         }
         suffix = Some(extension);
         let mut body = part[header_end..].to_vec();
@@ -101,5 +109,7 @@ fn split_bytes<'a>(haystack: &'a [u8], needle: &[u8]) -> Vec<&'a [u8]> {
 }
 
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }

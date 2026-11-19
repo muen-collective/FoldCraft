@@ -301,7 +301,6 @@ fn geometry(
     }
 }
 
-
 /// One entity as owned group pairs, so a block definition can be replayed
 /// many times with different INSERT transforms.
 #[derive(Clone, Debug)]
@@ -531,7 +530,13 @@ impl Expansion<'_> {
         handle: Option<String>,
         depth: usize,
     ) {
-        match geometry(kind, fields, vertices, self.scale, self.error / xform.scale.abs()) {
+        match geometry(
+            kind,
+            fields,
+            vertices,
+            self.scale,
+            self.error / xform.scale.abs(),
+        ) {
             Ok((points, closed)) => {
                 let mut path = Path {
                     entity: kind.into(),
@@ -564,10 +569,8 @@ impl Expansion<'_> {
                             // Measure the edge against its own span of source
                             // samples only. The full ring contains distant
                             // geometry that every straight edge would "miss".
-                            let start_index = simplified
-                                .iter()
-                                .position(|p| *p == e.start)
-                                .unwrap_or(i);
+                            let start_index =
+                                simplified.iter().position(|p| *p == e.start).unwrap_or(i);
                             let end_index = if i + 1 >= simplified.len() {
                                 path.points.len() - 1
                             } else {
@@ -578,7 +581,8 @@ impl Expansion<'_> {
                                     .map(|k| start_index + k)
                                     .unwrap_or(start_index + 1)
                             };
-                            let span = &path.points[start_index.min(end_index)..=end_index.max(start_index)];
+                            let span = &path.points
+                                [start_index.min(end_index)..=end_index.max(start_index)];
                             let dev = fit::max_deviation(span, std::slice::from_ref(e), 16);
                             if dev > self.fit_tolerance_m {
                                 faithful = false;
@@ -635,11 +639,7 @@ impl Expansion<'_> {
         }
         for raw in entities {
             let pairs = as_pairs(&raw.pairs);
-            let layer = field(&pairs, 8)
-                .ok()
-                .flatten()
-                .unwrap_or("0")
-                .to_owned();
+            let layer = field(&pairs, 8).ok().flatten().unwrap_or("0").to_owned();
             let layer = if layer == "0" {
                 inherited_layer.to_owned()
             } else {
@@ -675,7 +675,13 @@ impl Expansion<'_> {
                                 };
                                 let combined = xform.compose(&placed);
                                 let inner = block.piece.clone();
-                                self.insert(&entities, &combined, &layer, inner.as_deref(), depth + 1);
+                                self.insert(
+                                    &entities,
+                                    &combined,
+                                    &layer,
+                                    inner.as_deref(),
+                                    depth + 1,
+                                );
                             }
                             None => self.issues.push(Issue {
                                 entity: "INSERT".into(),
@@ -694,11 +700,7 @@ impl Expansion<'_> {
                 }
                 continue;
             }
-            let vertices = raw
-                .vertices
-                .iter()
-                .map(|v| as_pairs(v))
-                .collect::<Vec<_>>();
+            let vertices = raw.vertices.iter().map(|v| as_pairs(v)).collect::<Vec<_>>();
             if is_record_line(raw) {
                 // A record line is metadata consumed by the reader; it is
                 // never a contour and never an unsupported-entity issue.
@@ -710,12 +712,10 @@ impl Expansion<'_> {
     }
 
     /// Read an INSERT's placement in drawing space, already in metres.
-    fn instance(
-        &self,
-        pairs: &[Pair<'_>],
-        parent: &Xform,
-    ) -> Result<(String, Xform), String> {
-        let name = field(pairs, 2)?.ok_or("INSERT without a block name")?.to_owned();
+    fn instance(&self, pairs: &[Pair<'_>], parent: &Xform) -> Result<(String, Xform), String> {
+        let name = field(pairs, 2)?
+            .ok_or("INSERT without a block name")?
+            .to_owned();
         let sx = number(pairs, 41, Some(1.))?;
         let sy = number(pairs, 42, Some(sx))?;
         if !sx.is_finite() || !sy.is_finite() || sx == 0. || sy == 0. || (sx - sy).abs() > 1e-9 {

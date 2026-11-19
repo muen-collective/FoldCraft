@@ -1744,3 +1744,40 @@ button {
     padding: 6px;
 }
 .solver-dropdown .menu-item { padding: 10px; text-align: left; }
+
+.form-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 110px;
+  overflow-y: auto;
+}
+
+.form-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background-color: var(--surface-raised);
+  cursor: pointer;
+}
+
+.form-row:hover {
+  border-color: var(--accent);
+}
+
+.form-row.active {
+  border-color: var(--accent);
+  background-color: var(--accent-subtle);
+}
+
+.form-row-name {
+  font-size: 11px;
+}
+
+.form-row-meta {
+  font-size: 10px;
+  opacity: 0.7;
+}

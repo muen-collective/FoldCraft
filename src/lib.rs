@@ -2,9 +2,9 @@
 #![recursion_limit = "256"]
 extern crate self as marvelous_cloth;
 
+pub mod api;
 #[cfg(feature = "desktop")]
 pub mod atelier;
-pub mod api;
 pub mod authoring;
 pub mod avatar;
 pub mod avatar_catalog;
@@ -21,11 +21,11 @@ pub mod document;
 pub mod energy;
 pub(crate) mod energy_factors;
 pub mod fabrics;
+pub mod fitting;
 pub mod form_builder;
 pub mod form_guide;
 pub mod form_lines;
 pub mod form_sizing;
-pub mod fitting;
 pub mod garment;
 pub mod gltf_avatar;
 #[cfg(feature = "desktop")]
@@ -35,9 +35,9 @@ pub mod gpu_vbd;
 pub mod ipc;
 #[cfg(feature = "desktop")]
 pub use cssimpler;
+pub mod inspect;
 pub mod issue_report;
 pub mod math;
-pub mod inspect;
 pub mod mcp;
 /// Opt-in static mesh sizing; evaluated during preparation, never solver steps.
 pub mod mesh_resolution;
@@ -45,19 +45,19 @@ pub mod model;
 pub mod motion;
 pub mod ogc;
 pub mod pattern_import;
-pub mod preview;
 pub mod picking;
+pub mod preview;
 pub mod project;
 /// Shared optional renderer; the numerical modules do not depend on this module.
 #[cfg(feature = "desktop")]
 pub mod render;
 pub mod session_client;
-pub mod upload;
-pub mod skills;
 pub mod session_protocol;
+pub mod skills;
 pub mod solver;
 pub mod solver_lab;
 pub mod template_catalog;
+pub mod upload;
 /// CPU-only publication of static garment geometry as an OpenUSD scene.
 pub mod usd_scene;
 pub mod vbd;
