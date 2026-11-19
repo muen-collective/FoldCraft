@@ -373,6 +373,7 @@ pub fn update_panel_viewport_mesh(
 }
 
 /// Replace the display mesh of the body (`/Collider`) in a live scene, e.g. when another dress form is picked.
+#[cfg(feature = "desktop")]
 pub fn update_collider_mesh(
     scene: &cssimpler::renderer::gpu::usd::UsdScene,
     surface: &crate::avatar::SurfaceMesh,
