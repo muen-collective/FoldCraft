@@ -52,3 +52,7 @@ Write code comments, UI text and documentation in English; localization is futur
 `src/authoring.rs` owns CPU transactions and history. `src/atelier/authoring_ui.rs` and `gizmo.rs` are graphical adapters. Read `docs/authoring.md` before changing them. A placement preview is not new rest geometry; committing it resets dependent caches. Public manuals actually consulted are recorded in `docs/manual-study.md`. Do not advertise planned formats from `ROADMAP.md` as supported. The solver comparison contract is in `docs/solver-challenge.md`.
 
 The unified board is in `atelier/board.rs`, 3D selection/sewing in `atelier/edges_3d.rs` and Bézier operations in `garment/curves.rs`. Preserve shared boundary identities between views. `layout_2d` is excluded from physics; handles remain in local rest coordinates. Do not disable `serde_json/float_roundtrip` without checking mesh stability after reload.
+
+## Commits
+
+Do not add Claude as an author or contributor. No `Co-Authored-By` or `Claude-Session` trailers, and no "Generated with" lines in commit messages or pull request descriptions.
