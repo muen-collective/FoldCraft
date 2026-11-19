@@ -55,4 +55,4 @@ The unified board is in `atelier/board.rs`, 3D selection/sewing in `atelier/edge
 
 ## Commits
 
-Do not add Claude as an author or contributor. No `Co-Authored-By` or `Claude-Session` trailers, and no "Generated with" lines in commit messages or pull request descriptions.
+This applies to every agent and model that works in this repo. Do not add yourself, or any AI tool, as author or contributor: no `Co-Authored-By` or session-link trailers, and no "Generated with" lines in commit messages or pull request descriptions. Commits are authored by the person who asked for the work.
